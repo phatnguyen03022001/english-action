@@ -47,7 +47,7 @@
     {
       "path": "AGENTS.md",
       "purpose": "Canonical repository testing, security, naming, and measured CI governance.",
-      "sha256": "dc168007653477499a25456f751a7e9c0732786030a043893aad50509236e7fb"
+      "sha256": "23dccb22ed43d91386107d8f802165127f90441ed8d5b1b11c57e9a7298da225"
     },
     {
       "path": ".agents/skills/test-design-evidence/SKILL.md",
