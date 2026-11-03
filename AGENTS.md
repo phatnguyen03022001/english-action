@@ -2,12 +2,12 @@
 
 ## Purpose and ownership
 
-`phatnguyen03022001/english-action` is currently a **public reusable GitHub Actions governance repository**. Its **approved target (M1-A/M1-B)** additionally owns the Python-only Content Quality Engine, shareable tests and synthetic fixtures while preserving public reusable CI. Its two private consumer repositories are:
+`phatnguyen03022001/english-action` is a **public reusable CI governance and Python Content Quality Engine repository**. Its **approved target (M1-A/M1-B)** additionally owns the Python-only Content Quality Engine, shareable tests and synthetic fixtures while preserving public reusable CI. Its two private consumer repositories are:
 
 - `phatnguyen03022001/english` — English learning platform / product specifications.
 - `phatnguyen03022001/english-content` — English learning content and data quality pipeline.
 
-**Current implementation:** shared reusable CI workflow contracts and their validation; no Content Quality Engine migration is claimed. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies, secrets, triggers, permissions and CI results. This repo is not a data store, content publisher, learner app, private-CI proxy, deployment service or general-purpose CI farm.
+**Current implementation (TASK 06):** public Python Engine, synthetic regression suite and Linux CI. Cross-repository Node parity, private consumer integration and migration are **NOT VERIFIED**. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies, secrets, triggers, permissions and CI results. This repo is not a data store, content publisher, learner app, private-CI proxy, deployment service or general-purpose CI farm.
 
 Do not copy private source, private test fixtures, credentials, proprietary content, datasets, or learner data into this public repository, its logs, artifacts, caches, or issues.
 
@@ -56,7 +56,7 @@ tests/
 - Use lower_snake_case for `workflow_call` inputs/outputs; document their types, defaults, and required status in the workflow itself. Keep the interface minimal and avoid general-purpose free-form command execution.
 - Use lower-kebab-case for repository-owned files, directories, workflow names, and job IDs. Use descriptive human-readable workflow/job/step labels. Test names should follow the language and runner's idiom and state the behavior and condition.
 - `actions/<name>/action.yml` is allowed only for a **proven repeated set of steps** that needs a composite action, not as a replacement for reusable workflows.
-- **Current:** scripts/fixtures/tooling support public reusable workflow validation only. **Approved future target:** Python-only Content Quality Engine and its genuinely shareable public/synthetic tests may also reside here *after separately authorized migration*. Never copy restricted producer tests/fixtures, data, confidential evidence, secrets or unapproved source. Avoid redundant governance or placeholder directories.
+- **Current:** a public Python quality engine, synthetic regression suite and public CI exist; private consumer integration requires independent verification. **Approved future target:** Python-only Content Quality Engine and its genuinely shareable public/synthetic tests may also reside here *after separately authorized migration*. Never copy restricted producer tests/fixtures, data, confidential evidence, secrets or unapproved source. Avoid redundant governance or placeholder directories.
 
 ## Repository and change policy
 
@@ -65,7 +65,7 @@ tests/
 - Check current repository and consumer requirements before a workflow change. Record intended caller, exact contract, security boundary, test evidence, cost/concurrency trade-offs, and rollback to the previously pinned SHA.
 - Do not add product features, release/deploy workflows, runtime services, containers, databases, new dependencies, or an automated private-repo sync without a separately approved real requirement.
 
-**Current versus target:** this document records the approved future Engine ownership, not an installed Python Engine or verified consumer integration. No migration, Python runtime implementation, workflow deployment, private consumer wiring, access to secrets, dispatch, Git commit/push or publication is authorized by the document itself. Migration later needs parity/regression evidence, compatibility analysis and rollback.
+**Current versus target:** TASK 06 establishes initial public Python source, synthetic tests and CI without transferring private producer assets. These do not certify Node parity, private consumer wiring, content publication or cutover. Access to private secrets, consumer dispatch, migration and publication remain separately gated; TASK 07 requires parity and rollback evidence.
 
 ## Testing and CI design governance
 

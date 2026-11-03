@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "english-action-quality"
+version = "0.1.0"
+description = "Public content quality engine for private English producer inputs"
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4.23,<5"]
+
+[project.scripts]
+english-quality = "english_action.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["english_action*"]
