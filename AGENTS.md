@@ -2,14 +2,16 @@
 
 ## Purpose and ownership
 
-`phatnguyen03022001/english-action` is a **public GitHub Actions-only repository** serving exactly two private consumer repositories:
+`phatnguyen03022001/english-action` is currently a **public reusable GitHub Actions governance repository**. Its **approved target (M1-A/M1-B)** additionally owns the Python-only Content Quality Engine, shareable tests and synthetic fixtures while preserving public reusable CI. Its two private consumer repositories are:
 
 - `phatnguyen03022001/english` — English learning platform / product specifications.
 - `phatnguyen03022001/english-content` — English learning content and data quality pipeline.
 
-It owns **shared, reusable CI workflow definitions and their validation**. The consumer repositories own their source code, tests, dependencies, secrets, execution triggers, repository permissions, and test results. This repository is **not** a learning app, data store, content factory, deployment service, or general-purpose CI farm.
+**Current implementation:** shared reusable CI workflow contracts and their validation; no Content Quality Engine migration is claimed. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies, secrets, triggers, permissions and CI results. This repo is not a data store, content publisher, learner app, private-CI proxy, deployment service or general-purpose CI farm.
 
 Do not copy private source, private test fixtures, credentials, proprietary content, datasets, or learner data into this public repository, its logs, artifacts, caches, or issues.
+
+**Bounded quality domain (D1–D6, INV-01–INV-06):** the first producer slice covers exactly Foundation P0-a N1-01, N2-06, N3-11, K1-16, K1-17, K2-21 and N2-10; P0-b is deferred without cancellation. The Engine validates linguistic/semantic/content correctness, schema, dependency completeness, authenticated claim-specific evidence and rights for the private producer; it does **not** approve publication, set pedagogy, score learners, access private Account records or change the English product invariants. Lexical prefixed UUIDv7, revision CAS/append-only history, versioned dependency-closed eligibility and withdrawal must be preserved. Application prefixed UUIDv4 identities are separate. GitHub-first Mac-independent operation needs no Factory MongoDB; GitHub Actions is CI, not automatically an AI worker. Google Drive initial media storage with migration capability is a *target*, not an existing integration or rights grant. P1 direct database persistence of editorial AI drafts remains an english product obligation.
 
 ## GitHub Actions execution boundary
 
@@ -54,7 +56,7 @@ tests/
 - Use lower_snake_case for `workflow_call` inputs/outputs; document their types, defaults, and required status in the workflow itself. Keep the interface minimal and avoid general-purpose free-form command execution.
 - Use lower-kebab-case for repository-owned files, directories, workflow names, and job IDs. Use descriptive human-readable workflow/job/step labels. Test names should follow the language and runner's idiom and state the behavior and condition.
 - `actions/<name>/action.yml` is allowed only for a **proven repeated set of steps** that needs a composite action, not as a replacement for reusable workflows.
-- Scripts, fixtures, and tooling belong here only when required to validate or support **these public workflow definitions**. No copied product tests, no duplicated governance documents, no placeholder directories.
+- **Current:** scripts/fixtures/tooling support public reusable workflow validation only. **Approved future target:** Python-only Content Quality Engine and its genuinely shareable public/synthetic tests may also reside here *after separately authorized migration*. Never copy restricted producer tests/fixtures, data, confidential evidence, secrets or unapproved source. Avoid redundant governance or placeholder directories.
 
 ## Repository and change policy
 
@@ -63,12 +65,12 @@ tests/
 - Check current repository and consumer requirements before a workflow change. Record intended caller, exact contract, security boundary, test evidence, cost/concurrency trade-offs, and rollback to the previously pinned SHA.
 - Do not add product features, release/deploy workflows, runtime services, containers, databases, new dependencies, or an automated private-repo sync without a separately approved real requirement.
 
-**Current scope:** Record the repository's contract and standards. **No CI implementation, consumer wiring, secrets, or dispatch is authorized by this document alone.**
+**Current versus target:** this document records the approved future Engine ownership, not an installed Python Engine or verified consumer integration. No migration, Python runtime implementation, workflow deployment, private consumer wiring, access to secrets, dispatch, Git commit/push or publication is authorized by the document itself. Migration later needs parity/regression evidence, compatibility analysis and rollback.
 
 ## Testing and CI design governance
 
 - Design checks around observable behaviors, requirements, business rules, risks, defects, and public workflow contracts. Add negative and failure-path cases where they protect a meaningful boundary. Prefer clear Arrange-Act-Assert structure; isolate tests and use deterministic synthetic/public fixtures. Contract checks should verify inputs, outputs, permissions, and compatibility across the reusable workflow boundary.
-- Keep test source and private fixtures in their owning private repository. This public repository may validate its own workflow definitions only with public or synthetic data. The private caller owns actual test execution, results, runner, permissions, and billing.
+- **Test boundary:** reusable public/synthetic Quality Engine tests and public CI checks belong here only as separately approved future work. Production data, confidential tests/fixtures and restricted rights evidence remain in private english-content; learner-specific tests remain in private english. Each private caller runs its actual checks in its own runner context, with its own source, permissions, billing, logs and results, never through a public repo used as a billing proxy.
 - Choose the smallest test level that gives reliable evidence. Do not impose a coverage percentage, E2E suite, TDD sequence, or test registry by default. For changed behavior, connect the relevant requirement/defect/contract to the test evidence; avoid mirroring every test function in documentation.
 - Review security boundaries, least privilege, untrusted inputs and outputs, secret handling, cache scope, and artifact contents for workflow changes. Treat logs, artifacts, caches, fixtures, and generated output as untrusted data. Do not run untrusted code with elevated permissions or expose private material on public runners.
 - Verify syntax, permissions, and behavior with focused checks using public/synthetic fixtures. Preserve exit status and report exact commands, revision, failures, skipped checks, and limits. A public fixture check does not verify a private caller integration; report it separately as **NOT VERIFIED** until the authorized caller confirms it.
