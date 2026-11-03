@@ -1,0 +1,73 @@
+{
+  "upstream": {
+    "repository": "https://github.com/affaan-m/ECC.git",
+    "commit": "b38be6a7f6350964d59328b52f0624e1d1d552d1",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Affaan Mustafa"
+  },
+  "source_files": [
+    {
+      "path": "rules/common/testing.md",
+      "sha256": "09314a247342c12698deb308c2d0ffcf80b58341274bb8f9bba63fa03ce33323"
+    },
+    {
+      "path": "rules/common/security.md",
+      "sha256": "58f0acc56331b8d554dd036b8a1d5b2305a908e3960ff1e2d7e55223d5918bc3"
+    },
+    {
+      "path": "rules/common/coding-style.md",
+      "sha256": "3c069a2460702e1715e6b21408287401f1faa8d343045c98534d59fbd22a0e56"
+    },
+    {
+      "path": "skills/test-collaboration/SKILL.md",
+      "sha256": "741138330940e2c9d3cc7bec9e671787f24a361ff89be44e09a56abc8e10dcfa"
+    },
+    {
+      "path": "skills/verification-loop/SKILL.md",
+      "sha256": "9ee288d426660b0c785f534a003a4960fb4d8083a21302d8a4fd9b035b2edbb1"
+    },
+    {
+      "path": "skills/security-review/SKILL.md",
+      "sha256": "b9eb6416eebc8dda046674f0a2dbb3be88aff526d182b60a0f55998d3d6d0d8d"
+    },
+    {
+      "path": "skills/python-testing/SKILL.md",
+      "sha256": "8f8c24020abbf953727c5995abce8aabeb28d2a593cbc39b7e5de36cf5002abd"
+    },
+    {
+      "path": "skills/ai-regression-testing/SKILL.md",
+      "sha256": "83f2f5c4083af5762dd658f742d4a390eb3a6f969d835f69e8f47efba296c127"
+    },
+    {
+      "path": "skills/tdd-workflow/SKILL.md",
+      "sha256": "b6a8dd3e5215641cd9c33a46eae1d2b87508a07bc451e2c2fe25591f33a6b519"
+    }
+  ],
+  "adapted_targets": [
+    {
+      "path": "AGENTS.md",
+      "purpose": "Canonical repository testing, security, naming, and measured CI governance.",
+      "sha256": "dc168007653477499a25456f751a7e9c0732786030a043893aad50509236e7fb"
+    },
+    {
+      "path": ".agents/skills/test-design-evidence/SKILL.md",
+      "purpose": "Behavior-focused test design, contract cases, isolation, regression evidence.",
+      "sha256": "d4f36bfca202d0ab2b265ff1321eec89c77606bb031ec71baf13b9a883a24c6d"
+    },
+    {
+      "path": ".agents/skills/workflow-security-verification/SKILL.md",
+      "purpose": "Least-privilege reusable workflow security and honest verification boundaries.",
+      "sha256": "d818a4731856a77e4c19008b05c5fcb9d153ad912d2e14bbb68bd18a27b5cc65"
+    },
+    {
+      "path": ".agents/skills/ci-performance-scaling/SKILL.md",
+      "purpose": "Measured CI performance, small justified parallelism, cache and artifact controls.",
+      "sha256": "6622594aaec28da327d409b10feea24ec999156f5112447ee1d4f90903621b42"
+    }
+  ],
+  "selection": {
+    "adapted": "Common testing, security, KISS, regression, verification, and relevant Python testing principles, narrowed to this public reusable-workflow repository.",
+    "rejected": "Bulk rule or skill copying; fixed 80% coverage; forced E2E; mandatory TDD checkpoint commits; ECC agents, hooks, PR flows, dependencies, or implementation frameworks."
+  },
+  "license_file": "LICENSE"
+}
