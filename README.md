@@ -8,6 +8,13 @@
 - [Codex skills](.agents/skills/) provide task-specific guidance for test design, workflow security and verification, and measured CI performance.
 - [ECC provenance](third_party/ecc/manifest.json) records the pinned upstream sources and adapted files.
 
+## Feature modules and compatibility
+
+- `english_action/english/` owns independent Spec Kit specification validation for `english`. It does not import the content feature.
+- `english_action/content/` owns the Python Quality Engine, schema generation, candidate ledger/review and draft-only Spawn Engine for `english-content`. It does not import the English specification feature.
+- Legacy `english_action.*` imports, `python -m english_action`, `python -m english_action.spec_validate`, `python -m english_action.spawn`, `english-quality` and `english-spawn` remain available; the legacy Python modules delegate to the feature implementations. New direct module paths are `english_action.english.spec_validate`, `english_action.content.cli` and `english_action.content.spawn`.
+- Both existing reusable workflows stay in `.github/workflows/` and keep their inputs. Consumers may remain pinned to previous verified SHAs; no private consumer change is implied by this refactor.
+
 ## Current status
 
 The private english-content consumer now invokes a pinned Python Engine for schema and candidate commands; private regression, compatibility and rollback CI have been executed. Node historical-QA and fallback code remains in english-content. **Real publication stays disabled** without independently authenticated appointments, evidence, rights and editorial authority. The public repository neither executes private datasets nor proxies private CI billing.

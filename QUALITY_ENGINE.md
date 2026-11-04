@@ -1,6 +1,6 @@
 # Python Content Quality Engine — TASK 07
 
-Public implementation: `english_action/` (Python 3.11+, `jsonschema>=4.23,<5`). The private caller supplies V1/V2 JSON Schemas, registry, data and all authentic editorial evidence. GitHub-hosted CI does not require a Mac, MongoDB or external network schema resolver.
+Public implementation: `english_action/content/` (Python 3.11+, `jsonschema>=4.23,<5`); legacy `english_action.*` APIs/CLIs remain supported. The private caller supplies V1/V2 JSON Schemas, registry, data and all authentic editorial evidence. GitHub-hosted CI does not require a Mac, MongoDB or external network schema resolver.
 
 ## Engine and commands
 
