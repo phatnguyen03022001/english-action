@@ -182,7 +182,7 @@ def _refs(record: dict) -> list[tuple[str, str, set[str]]]:
     for field, expected in {
         "targetSenseId": "sns", "parentTopicId": "top", "sourceId": "src",
     }.items():
-        if field in record and (prefix, field) in {("eqv", "targetSenseId"), ("top", "parentTopicId"), ("evd", "sourceId")}:
+        if isinstance(record.get(field), str) and (prefix, field) in {("eqv", "targetSenseId"), ("top", "parentTopicId"), ("evd", "sourceId")}:
             out.append((field, record[field], {expected}))
     for field, expected in {
         "familyIds": "fam", "topicIds": "top", "constructionIds": "con", "evidenceIds": "evd",

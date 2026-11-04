@@ -58,6 +58,13 @@ class EngineTest(unittest.TestCase):
         synth_schemas(self.root)
         self.schemas = SchemaDirectory(self.root)
 
+    def test_nullable_topic_parent_is_not_a_reference(self):
+        from english_action.contracts import graph_issues
+        topic = {"_id": "top_01940000-0000-7000-8000-000000000001",
+                 "schemaVersion": "2.0.0", "lifecycleStatus": "active",
+                 "editorialStatus": "draft", "parentTopicId": None}
+        self.assertEqual(graph_issues([topic]), [])
+
     def test_js_digest_golden_vectors(self):
         self.assertEqual(digest({"lemma": "tiếng", "pos": "NOUN"}), "a3c9f60a2e7ee14bbb734c9794908e2434afb3c3331351800c37e0d903699b1f")
         self.assertEqual(js_json({"10": "a", "2": "b", "z": 1}), '{"2":"b","10":"a","z":1}')
