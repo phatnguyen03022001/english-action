@@ -423,6 +423,10 @@ class Validator:
         override = self.root / TEMPLATE
         if override.is_file():
             paths.append(override)
+        # Project-owned Spec Kit compatibility navigation, unlike vendored assets.
+        compatibility = self.root / ".specify/memory/constitution.md"
+        if compatibility.is_file():
+            paths.append(compatibility)
         return sorted(set(paths))
 
     def document_conventions(self, path: Path, lines: list[str]) -> None:

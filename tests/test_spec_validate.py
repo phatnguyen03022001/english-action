@@ -305,6 +305,16 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ERROR LINK_ESCAPE:", result.stdout)
 
+    def test_project_owned_spec_kit_navigation_links_are_validated(self) -> None:
+        path = ".specify/memory/constitution.md"
+        self.document(path, "# Compatibility\n\n[Valid](../../docs/product/capabilities.md)\n")
+        ok = self.run_cli()
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        self.document(path, "# Compatibility\n\n[Missing](../../docs/absent.md)\n")
+        broken = self.run_cli()
+        self.assertEqual(broken.returncode, 1)
+        self.assertIn(f"{path}:3: ERROR BROKEN_LINK:", broken.stdout)
+
     def test_generated_spec_template_links_use_destination_context(self) -> None:
         self.document("PRODUCT.md", "# Product\n\n## Human Owner Decisions\n")
         self.document(".specify/templates/overrides/spec-template.md",
