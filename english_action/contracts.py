@@ -121,6 +121,7 @@ class SchemaDirectory:
         folder = Path(root).resolve(strict=True) / version
         if not folder.is_dir():
             raise ValueError(f"Schema directory not found: {version}")
+        self.vocabularies = json.loads((folder / "vocabularies.json").read_text(encoding="utf-8")) if version == "v1" else {}
         self.schemas: dict[str, dict] = {}
         resources = []
         for path in sorted(folder.glob("*.schema.json")):
@@ -205,6 +206,295 @@ def _refs(record: dict) -> list[tuple[str, str, set[str]]]:
     if prefix == "dec" and isinstance(record.get("entryId"), str):
         out.append(("entryId", record["entryId"], {"lex"}))
     return out
+
+
+
+def validate_v1_graph(records: list[dict], vocabulary: dict, *, publication: bool = False) -> dict:
+    """V1 semantic and publication diagnostics; vocabulary is caller-supplied.
+
+    V1 review metadata cannot establish an independently authenticated
+    owner-appointed editorial authority, even when all schema checks pass.
+    """
+    import unicodedata
+
+    graph: list[dict] = []
+    publication_errors: list[dict] = []
+    by_id: dict[str, dict] = {}
+    active = set(vocabulary["identifiers"]["activeV1Prefixes"])
+    name_to_prefix = {name: p for p, name in {
+        "lex": "LexicalEntry", "sns": "LexicalSense", "frm": "LexicalForm",
+        "fam": "WordFamily", "mrf": "Morpheme", "ety": "Etymology",
+        "top": "Topic", "con": "Construction", "col": "Collocation",
+        "eqv": "TranslationEquivalence", "rel": "LexicalRelation",
+        "evd": "Evidence", "src": "Source", "rev": "EditorialReview",
+        "dec": "EditorialDecision",
+    }.items()}
+    rules = {r["type"]: r for r in vocabulary["relationTypes"]}
+    adjacency: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    seen_links: dict[tuple, str] = {}
+
+    def emit(code: str, ident: str, path: str, message: str, *, publishing: bool = False) -> None:
+        (publication_errors if publishing else graph).append(issue(code, ident, path, message))
+
+    for record in sorted(records, key=lambda r: r.get("_id", "") if isinstance(r, dict) else ""):
+        if not isinstance(record, dict):
+            emit("RECORD_INVALID", "", "records", "Record must be an object")
+            continue
+        ident = record.get("_id")
+        if not isinstance(ident, str):
+            emit("IDENTITY_INVALID", "", "_id", "Missing canonical identifier")
+            continue
+        prefix = ident.split("_", 1)[0]
+        if prefix not in active:
+            emit("INACTIVE_OR_UNKNOWN_ENTITY", ident, "_id", "Prefix is not active in V1")
+        elif ident in by_id:
+            emit("DUPLICATE_ID", ident, "_id", "Canonical ID occurs more than once")
+        else:
+            by_id[ident] = record
+
+    def reference(owner: dict, path: str, ident: Any, expected: tuple[str, ...],
+                  historical: bool = False) -> dict | None:
+        if not isinstance(ident, str):
+            return None
+        target = by_id.get(ident)
+        if target is None:
+            emit("REFERENCE_NOT_FOUND", owner["_id"], path, "Referenced entity does not exist: " + ident)
+            return None
+        prefix = ident.split("_", 1)[0]
+        if expected and prefix not in expected:
+            emit("REFERENCE_TYPE_MISMATCH", owner["_id"], path,
+                 "Expected " + "|".join(expected) + ", found " + prefix)
+            return None
+        if not historical and owner.get("lifecycleStatus") == "active" and target.get("lifecycleStatus") == "retired":
+            emit("RETIRED_LIVE_REFERENCE", owner["_id"], path, "Active record references retired entity: " + ident)
+        return target
+
+    def each(owner: dict, field: str, types: tuple[str, ...], historical: bool = False) -> None:
+        value = owner.get(field)
+        if isinstance(value, list):
+            for idx, ident in enumerate(value):
+                reference(owner, f"{field}/{idx}", ident, types, historical)
+        elif isinstance(value, str):
+            reference(owner, field, value, types, historical)
+
+    for record in sorted(records, key=lambda r: r.get("_id", "") if isinstance(r, dict) else ""):
+        if not isinstance(record, dict) or not isinstance(record.get("_id"), str):
+            continue
+        ident = record["_id"]
+        if by_id.get(ident) is not record:
+            continue
+        prefix = ident.split("_", 1)[0]
+        if prefix not in active:
+            continue
+        each(record, "evidenceIds", ("evd",), True)
+        if record.get("lifecycleStatus") == "retired":
+            each(record, "retiredByDecisionId", ("dec",), True)
+            each(record, "supersededByIds", ("sns",) if prefix == "sns" else tuple(sorted(active)), True)
+            if not record.get("retiredByDecisionId"):
+                emit("RETIREMENT_INVALID", ident, "retiredByDecisionId", "Retirement requires a decision")
+        elif any(record.get(k) for k in ("retirementMode", "retiredByDecisionId", "supersededByIds")):
+            emit("RETIREMENT_INVALID", ident, "lifecycleStatus", "Active record cannot carry retirement metadata")
+
+        if prefix == "lex":
+            each(record, "familyIds", ("fam",))
+        elif prefix == "sns":
+            each(record, "entryId", ("lex",))
+            each(record, "topicIds", ("top",))
+        elif prefix in ("frm", "ety"):
+            each(record, "entryId", ("lex",))
+        elif prefix == "con":
+            each(record, "senseId", ("sns",))
+        elif prefix == "col":
+            each(record, "anchorSenseId", ("sns",))
+        elif prefix == "top":
+            parent = record.get("parentTopicId")
+            if parent is not None:
+                each(record, "parentTopicId", ("top",))
+                if parent in by_id:
+                    adjacency["TOPIC_PARENT"][ident].add(parent)
+        elif prefix == "eqv":
+            source = reference(record, "sourceSenseId", record.get("sourceSenseId"), ("sns",))
+            target = (reference(record, "targetSenseId", record.get("targetSenseId"), ("sns",))
+                      if record.get("alignmentMode") == "sense_aligned" else None)
+            src_entry = by_id.get(source.get("entryId")) if source else None
+            tgt_entry = by_id.get(target.get("entryId")) if target else None
+            if src_entry and src_entry.get("language") != "en":
+                emit("BILINGUAL_LANGUAGE_MISMATCH", ident, "sourceSenseId",
+                     "Source sense must belong to an English entry")
+            if tgt_entry and tgt_entry.get("language") != "vi":
+                emit("BILINGUAL_LANGUAGE_MISMATCH", ident, "targetSenseId",
+                     "Target sense must belong to a Vietnamese entry")
+            if record.get("alignmentMode") == "gloss_only" and "targetSenseId" in record:
+                emit("ALIGNMENT_MODE_INVALID", ident, "targetSenseId",
+                     "Gloss-only may not contain a target sense")
+            if record.get("alignmentMode") == "sense_aligned" and not record.get("targetSenseId"):
+                emit("ALIGNMENT_MODE_INVALID", ident, "targetSenseId",
+                     "Aligned mode requires a real target sense")
+        elif prefix == "rel":
+            rule = rules.get(record.get("relationType"))
+            if rule is None:
+                emit("RELATION_TYPE_UNKNOWN", ident, "relationType", "Unregistered relation type")
+                continue
+            source_type, target_type = name_to_prefix[rule["sourceType"]], name_to_prefix[rule["targetType"]]
+            source = reference(record, "sourceId", record.get("sourceId"), (source_type,))
+            target = reference(record, "targetId", record.get("targetId"), (target_type,))
+            sid, tid = record.get("sourceId"), record.get("targetId")
+            if sid == tid:
+                emit("RELATION_SELF_LOOP", ident, "targetId", "Self-loop prohibited")
+            if rule.get("symmetric") and isinstance(sid, str) and isinstance(tid, str) and sid > tid:
+                emit("RELATION_NOT_CANONICAL", ident, "sourceId",
+                     "Symmetric storage order must be ascending ASCII")
+            if source is not None and target is not None:
+                if (rule["sourceType"] == "LexicalSense" and rule["targetType"] == "LexicalSense"
+                        and source.get("lifecycleStatus") == target.get("lifecycleStatus") == "active"):
+                    se, te = by_id.get(source.get("entryId")), by_id.get(target.get("entryId"))
+                    if (se and te and se.get("lifecycleStatus") == te.get("lifecycleStatus") == "active"
+                            and se["language"].split("-")[0] != te["language"].split("-")[0]):
+                        emit("RELATION_LANGUAGE_MISMATCH", ident, "targetId",
+                             "Sense-to-sense lexical relation requires compatible source and target languages")
+                first, second = (tid, sid) if rule.get("symmetric") and sid > tid else (sid, tid)
+                qualifiers = record.get("qualifiers") or {}
+                key_fields = vocabulary["relationModel"]["qualifierFieldsInOrder"]
+                qualifier_key = js_json([[k, unicodedata.normalize("NFC", qualifiers[k])]
+                                         for k in key_fields if k in qualifiers])
+                link_key = (record["relationType"], first, second, qualifier_key)
+                previous = seen_links.get(link_key)
+                if previous:
+                    emit("DUPLICATE_SEMANTIC_EDGE", ident, "relationType",
+                         "Same typed endpoints and semantic qualifiers as " + previous)
+                else:
+                    seen_links[link_key] = ident
+                if (rule.get("cyclePolicy") == "reject" and
+                        record.get("lifecycleStatus") == source.get("lifecycleStatus") == target.get("lifecycleStatus") == "active"):
+                    adjacency[record["relationType"]][sid].add(tid)
+        elif prefix == "evd":
+            each(record, "sourceId", ("src",), True)
+            each(record, "assertionIds", tuple(sorted(active)), True)
+        elif prefix == "rev":
+            each(record, "subjectIds", tuple(sorted(active)), True)
+        elif prefix == "dec":
+            for field, expected in {
+                "subjectIds": tuple(sorted(active)), "entryId": ("lex",),
+                "previousSenseIds": ("sns",), "proposedSenseIds": ("sns",),
+                "supersedesDecisionId": ("dec",), "affectedEdges": ("rel",),
+            }.items():
+                each(record, field, expected, True)
+
+    for edge_type, mapping in sorted(adjacency.items()):
+        visited: set[str] = set()
+        active_stack: dict[str, int] = {}
+        for start in sorted(mapping):
+            if start in visited:
+                continue
+            stack: list[tuple[str, list[str], int]] = [(start, sorted(mapping[start]), 0)]
+            active_stack[start] = 0
+            visited.add(start)
+            while stack:
+                ident, neighbors, next_index = stack[-1]
+                if next_index == len(neighbors):
+                    active_stack.pop(ident, None)
+                    stack.pop()
+                    continue
+                target = neighbors[next_index]
+                stack[-1] = (ident, neighbors, next_index + 1)
+                if target not in visited:
+                    visited.add(target)
+                    active_stack[target] = len(stack)
+                    stack.append((target, sorted(mapping.get(target, ())), 0))
+                elif target in active_stack:
+                    cycle = [item[0] for item in stack[active_stack[target]:]] + [target]
+                    emit("CYCLE_DETECTED", ident, edge_type, " -> ".join(cycle))
+
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for sense in (r for r in by_id.values() if r["_id"].startswith("sns_") and r.get("lifecycleStatus") == "retired"):
+        decision = by_id.get(sense.get("retiredByDecisionId"))
+        if not decision or not decision["_id"].startswith("dec_"):
+            continue
+        mode = sense.get("retirementMode")
+        if mode in ("semantic_split", "semantic_merge", "duplicate_reconciliation"):
+            groups[(decision["_id"], mode)].append(sense)
+        action = {"semantic_split": "split", "semantic_merge": "merge",
+                  "duplicate_reconciliation": "duplicate_reconciliation", "invalidated": "invalidate"}.get(mode)
+        if (decision.get("action") != action or sense["_id"] not in decision.get("subjectIds", []) or
+                sense["_id"] not in decision.get("previousSenseIds", []) or
+                sorted(decision.get("proposedSenseIds") or []) != sorted(sense.get("supersededByIds") or [])):
+            emit("DECISION_TRANSITION_MISMATCH", sense["_id"], "retiredByDecisionId",
+                 "Decision action, source IDs, or proposed successors do not match retirement")
+        if decision.get("outcome") != "accepted":
+            emit("DECISION_NOT_ACCEPTED", sense["_id"], "retiredByDecisionId",
+                 "Transition decision is not accepted")
+        for successor_id in sense.get("supersededByIds", ()):
+            successor = by_id.get(successor_id)
+            if successor and successor.get("lifecycleStatus") != "active":
+                emit("SUCCESSOR_RETIRED", sense["_id"], "supersededByIds", "Successor must be active")
+            if successor and successor.get("entryId") != sense.get("entryId"):
+                emit("SUCCESSOR_OWNERSHIP_MISMATCH", sense["_id"], "supersededByIds",
+                     "Successor belongs to a different entry")
+        if mode in ("semantic_split", "semantic_merge", "duplicate_reconciliation"):
+            emit("INSUFFICIENT_EVIDENCE", sense["_id"], "retiredByDecisionId",
+                 "Cannot prove new/existing successor identity or approved incoming-edge resolution",
+                 publishing=True)
+        if mode == "duplicate_reconciliation" and not (decision.get("evidenceIds") and sense.get("evidenceIds")):
+            emit("INSUFFICIENT_EVIDENCE", sense["_id"], "evidenceIds",
+                 "Duplicate identity has no independently reviewable evidence", publishing=True)
+    for (decision_id, mode), group in groups.items():
+        decision = by_id[decision_id]
+        if mode == "semantic_merge":
+            if (len(group) < vocabulary["retirementRequirements"]["semantic_merge"]["retiredSourceMin"] or
+                    len(decision.get("previousSenseIds", ())) != len(group) or
+                    len({tuple(s.get("supersededByIds") or [None])[0] for s in group}) != 1):
+                emit("MERGE_GROUP_INVALID", decision_id, "previousSenseIds",
+                     "Merge requires two or more retired sources and exactly one common successor")
+        elif len(group) != 1 or len(decision.get("previousSenseIds", ())) != 1:
+            emit("RETIREMENT_GROUP_INVALID", decision_id, "previousSenseIds",
+                 "Split/reconciliation requires exactly one retired source")
+
+    accepted_reviews: set[str] = set()
+    for review in by_id.values():
+        if (review["_id"].startswith("rev_") and review.get("lifecycleStatus") == "active"
+                and review.get("outcome") == "accepted"):
+            accepted_reviews.update(review.get("subjectIds") or [])
+    for record in by_id.values():
+        if record.get("lifecycleStatus") != "active":
+            continue
+        ident = record["_id"]
+        status = record.get("editorialStatus")
+        if status in ("disputed", "rejected"):
+            emit("PUBLICATION_STATUS_BLOCKED", ident, "editorialStatus",
+                 "Disputed/rejected claim may not be published", publishing=True)
+        elif status != "verified":
+            emit("PUBLICATION_NOT_VERIFIED", ident, "editorialStatus",
+                 "Only verified records may be published", publishing=True)
+        else:
+            if not record.get("evidenceIds"):
+                emit("PUBLICATION_EVIDENCE_MISSING", ident, "evidenceIds",
+                     "Verified claim requires evidence", publishing=True)
+            else:
+                for ev_id in record["evidenceIds"]:
+                    ev = by_id.get(ev_id)
+                    source = by_id.get(ev.get("sourceId")) if ev else None
+                    if not ev or ident not in ev.get("assertionIds", ()):
+                        emit("PUBLICATION_EVIDENCE_MISSING", ident, "evidenceIds",
+                             "Evidence must attest the specific claim", publishing=True)
+                    if not source or not source.get("license") or not source.get("permittedUse"):
+                        emit("INSUFFICIENT_EVIDENCE", ident, "evidenceIds",
+                             "Source permission/licensing not verifiable", publishing=True)
+            if ident not in accepted_reviews:
+                emit("PUBLICATION_REVIEW_MISSING", ident, "editorialStatus",
+                     "No accepted editorial review addresses this claim", publishing=True)
+            emit("INSUFFICIENT_EVIDENCE", ident, "editorialStatus",
+                 "V1 cannot establish owner-appointed LER authority, final approval and permitted reuse",
+                 publishing=True)
+    graph = sort_issues(graph)
+    publication_errors = sort_issues(publication_errors)
+    selected = sort_issues(graph + publication_errors) if publication else graph
+    return {
+        "valid": not graph and (not publication or not publication_errors),
+        "stage": "graph",
+        "issues": selected,
+        "publication": {"eligible": not graph and not publication_errors,
+                        "issues": publication_errors},
+    }
 
 
 def graph_issues(records: list[dict], version: str = "v2") -> list[dict]:
@@ -479,11 +769,9 @@ def validate_dataset(records_or_dataset: Any, schemas: SchemaDirectory, *, versi
     errors = schemas.validate(records)
     if errors:
         return {"valid": False, "stage": "schema", "issues": errors, "publication": {"eligible": False, "issues": []}}
-    graph = graph_issues(records, version)
     if version == "v1":
-        # V1 lacks independent authority attestation; it can never authorize publication.
-        publication_result = {"eligible": False, "issues": [issue("INSUFFICIENT_EVIDENCE", "", "editorialStatus", "V1 cannot establish authenticated authority")]}
-    else:
-        publication_result = evaluate_publication(records, limit=publication_issue_limit)
+        return validate_v1_graph(records, schemas.vocabularies, publication=publication)
+    graph = graph_issues(records, version)
+    publication_result = evaluate_publication(records, limit=publication_issue_limit)
     issues = sort_issues(graph + (publication_result["issues"] if publication else []))
     return {"valid": not issues and (not publication or publication_result["eligible"]), "stage": "graph", "issues": issues, "publication": publication_result}
