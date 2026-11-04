@@ -1,0 +1,79 @@
+name: Reusable Python Content Quality Gate
+
+on:
+  workflow_call:
+    inputs:
+      engine_sha:
+        description: Immutable public engine SHA matching the caller workflow pin
+        required: true
+        type: string
+      validation_input:
+        description: Consumer-owned batch path inside its checkout
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout caller source at triggering SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Setup Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Checkout pinned public engine
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: phatnguyen03022001/english-action
+          ref: ${{ inputs.engine_sha }}
+          path: .quality-engine-src
+          persist-credentials: false
+      - name: Verify engine revision and install
+        env:
+          ENGINE_SHA: ${{ inputs.engine_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          test "$(git -C .quality-engine-src rev-parse HEAD)" = "$ENGINE_SHA"
+          python -m pip install --disable-pip-version-check --no-input ./.quality-engine-src
+      - name: Validate private consumer batch without logging its contents
+        env:
+          VALIDATION_INPUT: ${{ inputs.validation_input }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          p = Path(os.environ["VALIDATION_INPUT"])
+          if p.is_absolute() or ".." in p.parts or not p.parts:
+              raise SystemExit("Invalid consumer-owned batch path")
+          source = p.resolve(strict=True)
+          if not source.is_relative_to(Path.cwd()) or not source.is_file():
+              raise SystemExit("Consumer batch escapes checkout")
+          with tempfile.TemporaryDirectory(dir=os.environ["RUNNER_TEMP"]) as tmp:
+              state = Path(tmp) / "state.json"
+              completed = subprocess.run(
+                  [sys.executable, "-m", "english_action", "validate",
+                   "--schemas", "schemas", "--input", str(source), "--state", str(state)],
+                  capture_output=True, text=True, check=False)
+              if completed.returncode != 0:
+                  raise SystemExit("Python engine rejected private batch; details redacted")
+              try:
+                  output = json.loads(completed.stdout)
+              except json.JSONDecodeError:
+                  raise SystemExit("Python engine output is not JSON")
+              if output.get("status") != "dry-run" or output.get("issues") != [] or output.get("publicationEligible") is not False or state.exists():
+                  raise SystemExit("Python validation or isolation invariant failed; details redacted")
+              print("Private consumer validation PASS: dry-run, zero issues, no publication, no state write")
+          PY
