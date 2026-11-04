@@ -119,6 +119,37 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
     return errors
 
 
+def _media_issues(payload: dict, media_root: str | None) -> list[str]:
+    if media_root is None:
+        return []
+    root = Path(media_root).resolve(strict=True)
+    assets = payload.get("assets", [])
+    if "audio" in payload:
+        assets = [payload["audio"], *assets]
+    errors = []
+    for asset in assets:
+        if not isinstance(asset, dict) or asset.get("storage") != "local-fixture":
+            # No claim about remote Google Drive availability or rights.
+            continue
+        locator = asset.get("locator")
+        if not isinstance(locator, str) or not locator or Path(locator).is_absolute():
+            errors.append("MEDIA_LOCATOR_INVALID")
+            continue
+        path = root / locator
+        if any(p == ".." for p in Path(locator).parts) or path.is_symlink():
+            errors.append("MEDIA_PATH_UNSAFE")
+            continue
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                raise ValueError("unsafe")
+            if sha256(resolved.read_bytes()).hexdigest() != asset["sha256"]:
+                errors.append("MEDIA_HASH_MISMATCH")
+        except (OSError, ValueError):
+            errors.append("MEDIA_NOT_AVAILABLE")
+    return errors
+
+
 def load_contract(path: str) -> Draft202012Validator:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     def walk(node: Any) -> None:
@@ -219,7 +250,8 @@ def _check_batch(batch: Any) -> None:
 
 async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
                    timeout: float = 30, retries: int = 1,
-                   contract: Draft202012Validator | None = None) -> list[dict]:
+                   contract: Draft202012Validator | None = None,
+                   media_root: str | None = None) -> list[dict]:
     _check_batch(batch)
     if not 1 <= concurrency <= 16 or not 0 < timeout <= 120 or not 0 <= retries <= 3:
         raise ValueError("Unbounded concurrency, timeout or retry configuration")
@@ -242,6 +274,8 @@ async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
                             "workerId": seed_id, "mode": "synthetic" if worker.provider == "synthetic" else "real_ai"},
                             "revision": 1, "status": "HOLD", "unresolvedEvidence": list(UNRESOLVED)}
                     errors = validate_content(seed["recipe"], output)
+                    if not errors:
+                        errors.extend(_media_issues(output, media_root))
                     if contract is not None:
                         errors.extend("PRIVATE_CONTRACT_INVALID" for _ in list(contract.iter_errors(item))[:1])
                     if errors:
@@ -339,6 +373,7 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--contract", required=True, help="Private producer JSON Schema")
     parser.add_argument("--schemas", help="Private lexical schema root")
     parser.add_argument("--quality-input", help="Private lexical batch for Python Quality Engine validation")
+    parser.add_argument("--media-root", help="Private local synthetic media fixture root")
     parser.add_argument("--provider", choices=("synthetic", "openai"), default="synthetic")
     parser.add_argument("--model")
     parser.add_argument("--allow-real-ai", action="store_true")
@@ -368,7 +403,8 @@ def run(argv: list[str] | None = None) -> int:
         validator = load_contract(opts.contract)
         quality = check_quality(opts.schemas, opts.quality_input)
         result = asyncio.run(generate(batch, worker, concurrency=opts.concurrency,
-                                      timeout=opts.timeout, retries=opts.retries, contract=validator))
+                                      timeout=opts.timeout, retries=opts.retries, contract=validator,
+                                      media_root=opts.media_root))
         report = persist(batch, result, opts.state, quality)
         print(_canonical(report))
         return 0 if report["rejected"] == 0 else 1
