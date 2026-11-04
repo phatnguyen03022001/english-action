@@ -159,6 +159,171 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertEqual(snapshot(), before)
         self.assertLess(len(result.stdout), 1000)
 
+
+    def document(self, name: str, content: str) -> Path:
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_multidocument_links_anchors_and_existing_compatibility_pass(self) -> None:
+        self.document("README.md",
+                      "# Navigation\n\n[Quality](docs/reference.md#quality-contract) "
+                      "[Repeated](docs/reference.md#repeated-1) "
+                      "[Explicit](docs/reference.md#stable-id) "
+                      "[Encoded](docs/a%2Db.md#caf%C3%A9) "
+                      "[Directory](docs/) "
+                      "[External](https://example.org/absent.md)\n"
+                      "[Reference][reference]\n\n[reference]: docs/reference.md#quality-contract\n")
+        self.document("docs/a-b.md", "# Café\n")
+        self.document("docs/reference.md",
+                      "# Reference\n\n## Quality Contract\n\n## Repeated\n"
+                      "## Repeated\n\n<a id=\"stable-id\"></a>\n")
+        self.document("docs/product/feature-spec-template.md",
+                      "# Compatibility\n\n[Canonical](../../specs/001-synthetic-flow/spec.md)\n")
+        self.document("docs/adr/0001-synthetic-decision.md", "# Synthetic decision\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("0 advisory warning(s)", result.stdout)
+
+    def test_other_spec_kit_artifacts_are_scanned_without_gate_2_path_rejection(self) -> None:
+        self.document("specs/001-synthetic-flow/plan.md",
+                      "# Plan\n\n[Reference](../../docs/reference.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.document("specs/001-synthetic-flow/plan.md",
+                      "# Plan\n\n[Missing](../../docs/nonexistent.md)\n")
+        self.assertIn("ERROR BROKEN_LINK:", self.run_cli().stdout)
+
+    def test_broken_local_image_link_fails(self) -> None:
+        self.document("README.md", "# Navigation\n\n![Missing visual](docs/absent.png)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR BROKEN_LINK:", result.stdout)
+
+    def test_broken_root_readme_link_fails(self) -> None:
+        self.document("README.md", "# Navigation\n\n[Missing](docs/absent.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("README.md:3: ERROR BROKEN_LINK:", result.stdout)
+
+    def test_broken_specialist_anchor_fails(self) -> None:
+        self.document("docs/specialist.md", "# Actual Heading\n")
+        self.document("docs/reference.md", "# Reference\n\n[Missing](specialist.md#absent)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("docs/reference.md:3: ERROR BROKEN_ANCHOR:", result.stdout)
+
+    def test_broken_reference_definition_fails(self) -> None:
+        self.document("README.md", "# Navigation\n\n[See][contract]\n\n"
+                      "[contract]: docs/no-contract.md\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("README.md:5: ERROR BROKEN_LINK:", result.stdout)
+
+    def test_broken_cross_feature_markdown_reference_fails(self) -> None:
+        self.document("README.md", "# Features\n\n"
+                      "[Companion](specs/002-absent/spec.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("README.md:3: ERROR BROKEN_LINK:", result.stdout)
+
+    def test_encoded_repository_escape_and_invalid_local_path_fail(self) -> None:
+        self.document("README.md", "# Navigation\n"
+                      "[Outside](%2e%2e/%2e%2e/private.md)\n"
+                      "[Invalid](docs/%00.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR LINK_ESCAPE:", result.stdout)
+        self.assertIn("ERROR INVALID_LINK:", result.stdout)
+
+    def test_symlink_escape_is_rejected(self) -> None:
+        outside = self.root.parent / "external.md"
+        outside.write_text("# Outside\n", encoding="utf-8")
+        (self.root / "docs/outside.md").symlink_to(outside)
+        self.document("README.md", "# Navigation\n[Outside](docs/outside.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR LINK_ESCAPE:", result.stdout)
+
+    def test_generated_spec_template_links_use_destination_context(self) -> None:
+        self.document("PRODUCT.md", "# Product\n\n## Human Owner Decisions\n")
+        self.document(".specify/templates/overrides/spec-template.md",
+                      "# Spec Template\n\n"
+                      "[Product](../../PRODUCT.md#human-owner-decisions)\n"
+                      "[Inventory](../../docs/product/capabilities.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.document(".specify/templates/overrides/spec-template.md",
+                      "# Spec Template\n\n[Broken](../../absent.md)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR BROKEN_LINK:", result.stdout)
+
+    def test_ordinary_document_does_not_receive_template_exception(self) -> None:
+        self.document("PRODUCT.md", "# Product\n")
+        self.document("docs/reference.md", "# Reference\n"
+                      "[Invalid here](../../PRODUCT.md)\n")
+        # docs/reference.md -> ../../PRODUCT.md escapes repo.
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR LINK_ESCAPE:", result.stdout)
+
+    def test_invalid_specialist_and_adr_naming_fail(self) -> None:
+        self.document("docs/Bad_Name.md", "# Invalid naming\n")
+        self.document("docs/adr/decision.md", "# Unnumbered ADR\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("docs/Bad_Name.md:1: ERROR BAD_DOC_PATH:", result.stdout)
+        self.assertIn("docs/adr/decision.md:1: ERROR BAD_DOC_PATH:", result.stdout)
+
+    def test_preferred_loc_budgets_warn_without_failing(self) -> None:
+        self.spec.write_text(self.spec.read_text(encoding="utf-8") + "\n" * 250,
+                             encoding="utf-8")
+        self.document("PRODUCT.md", "# Product\n" + "\n" * 300)
+        self.document("docs/large-contract.md", "# Domain\n" + "\n" * 400)
+        self.document("docs/adr/0001-a-decision.md", "# ADR\n" + "\n" * 200)
+        self.document(".specify/templates/overrides/spec-template.md",
+                      "# Spec Template\n" + "\n" * 150)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("WARNING LOC_PREFERRED:"), 5, result.stdout)
+        self.assertIn("PASS; 0 structural error(s); 5 advisory warning(s)", result.stdout)
+
+    def test_review_loc_budgets_warn_without_failing(self) -> None:
+        self.spec.write_text(self.spec.read_text(encoding="utf-8") + "\n" * 350,
+                             encoding="utf-8")
+        self.document("PRODUCT.md", "# Product\n" + "\n" * 450)
+        self.document("docs/large-contract.md", "# Domain\n" + "\n" * 600)
+        self.document("docs/adr/0001-a-decision.md", "# ADR\n" + "\n" * 300)
+        self.document(".specify/templates/overrides/spec-template.md",
+                      "# Spec Template\n" + "\n" * 200)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("WARNING LOC_REVIEW:"), 5, result.stdout)
+        self.assertIn("PASS; 0 structural error(s); 5 advisory warning(s)", result.stdout)
+
+    def test_advisory_output_is_bounded_and_sorted(self) -> None:
+        for index in range(80):
+            self.document(f"docs/contract-{index:03d}.md",
+                          "# Synthetic contract\n" + "\n" * 401)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("80 advisory warning(s)", result.stdout)
+        self.assertIn("further diagnostics suppressed", result.stdout)
+        self.assertLessEqual(result.stdout.count("WARNING"), 60)
+        self.assertEqual(result.stdout, self.run_cli().stdout)
+
+    def test_documentation_is_not_mutated_by_validation(self) -> None:
+        self.document("README.md", "# Navigation\n\n[Contract](docs/reference.md)\n")
+        self.document("docs/specialist.md", "# Specialist\n")
+        def digest() -> dict[str, bytes]:
+            return {p.relative_to(self.root).as_posix(): hashlib.sha256(p.read_bytes()).digest()
+                    for p in self.root.rglob("*.md") if p.is_file()}
+        before = digest()
+        self.assertEqual(self.run_cli().returncode, 0)
+        self.assertEqual(digest(), before)
+
     def test_invalid_root_is_usage_error(self) -> None:
         result = self.run_cli(self.root / "nonexistent")
         self.assertEqual(result.returncode, 2)

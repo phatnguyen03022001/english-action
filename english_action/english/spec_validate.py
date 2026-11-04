@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import html
 from pathlib import Path
 import re
 import sys
@@ -18,16 +19,30 @@ META = re.compile(r"^\*\*([^*]+)\*\*:\s*(.*)$")
 STORY = re.compile(r"^### User Story (\d+) - .+ \(Priority: (P[123])\)\s*$")
 IDENT = re.compile(r"^-\s+\*\*((?:FR|NFR|SC)-(\d{3}))\*\*(?:\s*[:—-])")
 CAP = re.compile(r"(?<![\w-])D\d{2}-\d{2}(?![\w-])")
-LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\((?P<dest><[^>]+>|[^)\s]+)(?:\s+['\"][^'\"]+['\"])?\)")
+LINK = re.compile(r"\[[^\]\n]+\]\((?P<dest><[^>]+>|[^)\s]+)(?:\s+['\"][^'\"]+['\"])?\)")
+LINK_DEF = re.compile(r"^\s{0,3}\[[^\]\n]+\]:\s*(?P<dest><[^>]+>|\S+)")
+HTML_ANCHOR = re.compile(r'<a\b[^>]*\b(?:id|name)=["\']([^"\']+)["\']', re.I)
+FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+DOC_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\.md\Z")
+ADR_NAME = re.compile(r"\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md\Z")
+TEMPLATE = Path(".specify/templates/overrides/spec-template.md")
 REF = re.compile(r"(?<![\w-])(?P<kind>US|NFR|FR|SC)-?(?P<num>\d{1,3})(?P<scenario>\.\d+)?(?P<tail>(?:\s*[-–/]\s*\d+(?:\.\d+)?)*)")
 CROSS = re.compile(r"(?<![\w-])F(?P<feature>\d{3}):(?P<kind>US|FR|NFR|SC)-?(?P<num>\d{1,3})(?![\w.])")
 FIELDS = ("Feature ID", "Repository Branch", "Created", "Decision Status",
           "Product Increment", "Feature Scope", "Authoritative Input",
           "Human Owner Decisions", "Related Capability IDs",
           "Canonical Specialist Contracts")
-MAX_FILES = 256
+MAX_FILES = 256  # Feature specs, retained for existing compatibility.
+MAX_DOC_FILES = 512
 MAX_SIZE = 2_000_000
+MAX_TOTAL_BYTES = 16_000_000
 MAX_OUTPUT = 60
+# (Preferred LOC, review LOC); budgets are advisory, never acceptance gates.
+SPEC_BUDGET = (250, 350)
+DISCOVERY_BUDGET = (300, 450)
+DOMAIN_BUDGET = (400, 600)
+ADR_BUDGET = (200, 300)
+TEMPLATE_BUDGET = (150, 200)
 
 
 @dataclass(frozen=True, order=True)
@@ -51,9 +66,12 @@ class Validator:
     def __init__(self, root: Path):
         self.root = root
         self.errors: list[Issue] = []
+        self.warnings: list[Issue] = []
         self.inventory: set[str] = set()
         self.specs: dict[str, Spec] = {}
         self.anchor_cache: dict[Path, set[str]] = {}
+        self.lines_cache: dict[Path, list[str]] = {}
+        self.bytes_read = 0
 
     def emit(self, path: Path, line: int, code: str, message: str) -> None:
         try:
@@ -63,15 +81,22 @@ class Validator:
         self.errors.append(Issue(name, line, code, message))
 
     def read(self, path: Path, line: int = 1) -> list[str] | None:
-        if not path.resolve().is_relative_to(self.root):
-            self.emit(path, line, "PATH_ESCAPE", "Path escapes caller repository")
-            return None
         try:
-            if path.stat().st_size > MAX_SIZE:
-                self.emit(path, line, "TOO_LARGE", "Document exceeds validator size bound")
+            resolved = path.resolve()
+            if not resolved.is_relative_to(self.root):
+                self.emit(path, line, "PATH_ESCAPE", "Path escapes caller repository")
                 return None
-            return path.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeError) as exc:
+            if resolved in self.lines_cache:
+                return self.lines_cache[resolved]
+            size = path.stat().st_size
+            if size > MAX_SIZE or self.bytes_read + size > MAX_TOTAL_BYTES:
+                self.emit(path, line, "TOO_LARGE", "Documentation exceeds validator read bound")
+                return None
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.bytes_read += size
+            self.lines_cache[resolved] = lines
+            return lines
+        except (OSError, UnicodeError, ValueError) as exc:
             self.emit(path, line, "UNREADABLE", f"Cannot read document ({type(exc).__name__})")
             return None
 
@@ -271,53 +296,161 @@ class Validator:
 
     @staticmethod
     def anchors(lines: list[str]) -> set[str]:
+        """GitHub-style ATX anchors, repeated-heading suffixes and explicit HTML IDs."""
         counts: dict[str, int] = {}
         result: set[str] = set()
+        fenced = False
+        marker = ""
         for line in lines:
+            fence = FENCE.match(line)
+            if fence:
+                run = fence.group(1)
+                if not fenced:
+                    fenced, marker = True, run
+                elif run[0] == marker[0] and len(run) >= len(marker):
+                    fenced = False
+                continue
+            if fenced:
+                continue
+            result.update(html.unescape(value) for value in HTML_ANCHOR.findall(line))
             match = HEADING.match(line)
             if match is None:
                 continue
             title = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", match.group(2))
             title = re.sub(r"<[^>]*>", "", title)
-            slug = re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
+            title = html.unescape(title).replace(chr(96), "").replace("*", "")
+            slug = re.sub(r"[^\w\-\s]", "", title.lower())
+            slug = re.sub(r"\s", "-", slug)
             prior = counts.get(slug, 0)
             counts[slug] = prior + 1
             result.add(f"{slug}-{prior}" if prior else slug)
         return result
 
-    def links(self, spec: Spec) -> None:
-        fence = False
-        tick = chr(96)
-        for line_no, line in enumerate(spec.lines, 1):
-            if line.lstrip().startswith((tick * 3, "~~~")):
-                fence = not fence
+    def links(self, path: Path, lines: list[str], *, template: bool = False) -> None:
+        # The canonical override is copied to specs/NNN-slug/spec.md. Only that
+        # template gets the generated-spec link base; normal docs use their own.
+        base = self.root / "specs/000-template-context" if template else path.parent
+        fenced = False
+        marker = ""
+        comment = False
+        for line_no, line in enumerate(lines, 1):
+            fence = FENCE.match(line)
+            if fence and not comment:
+                run = fence.group(1)
+                if not fenced:
+                    fenced, marker = True, run
+                elif run[0] == marker[0] and len(run) >= len(marker):
+                    fenced = False
                 continue
-            if fence:
+            if fenced:
                 continue
-            source = re.sub(tick + "[^" + tick + "]+" + tick, "", line)
-            for match in LINK.finditer(source):
-                dest = match.group("dest").strip("<>")
-                if not dest or dest.startswith(("http:", "https:", "mailto:", "tel:", "//")):
-                    continue
-                url = urlsplit(dest)
-                if url.scheme or url.netloc:
-                    continue
-                link_path, fragment = unquote(url.path), unquote(url.fragment)
-                target = (spec.path if not link_path else
-                          self.root / link_path.lstrip("/") if link_path.startswith("/") else
-                          spec.path.parent / link_path)
-                if target.suffix.lower() != ".md":
-                    continue
-                if not target.resolve().is_relative_to(self.root):
-                    self.emit(spec.path, line_no, "LINK_ESCAPE", "Relative link escapes repository")
-                elif not target.is_file():
-                    self.emit(spec.path, line_no, "BROKEN_LINK", "Relative Markdown file missing")
-                elif fragment:
-                    key = target.resolve()
-                    if key not in self.anchor_cache:
-                        self.anchor_cache[key] = self.anchors(self.read(target, line_no) or [])
-                    if fragment not in self.anchor_cache[key]:
-                        self.emit(spec.path, line_no, "BROKEN_ANCHOR", "Markdown heading anchor missing")
+            # Ignore Markdown in comments and inline code, not ordinary prose.
+            source = ""
+            remaining = line
+            while remaining:
+                if comment:
+                    end = remaining.find("-->")
+                    if end < 0:
+                        break
+                    remaining, comment = remaining[end + 3:], False
+                else:
+                    start = remaining.find("<!--")
+                    if start < 0:
+                        source += remaining
+                        break
+                    source += remaining[:start]
+                    remaining, comment = remaining[start + 4:], True
+            source = re.sub(r"(`+).*?\1", "", source)
+            destinations = [match.group("dest") for match in LINK.finditer(source)]
+            defined = LINK_DEF.match(source)
+            if defined:
+                destinations.append(defined.group("dest"))
+            for dest in destinations:
+                dest = html.unescape(dest.strip("<>"))
+                try:
+                    url = urlsplit(dest)
+                    if url.scheme or url.netloc or dest.startswith("//"):
+                        continue  # External references are never fetched.
+                    rel, fragment = unquote(url.path), unquote(url.fragment)
+                    if not rel and not fragment:
+                        continue
+                    target = (path if not rel else
+                              self.root / rel.lstrip("/") if rel.startswith("/") else
+                              base / rel)
+                    resolved = target.resolve()
+                    if not resolved.is_relative_to(self.root):
+                        self.emit(path, line_no, "LINK_ESCAPE", "Local link escapes repository")
+                    elif not resolved.exists():
+                        self.emit(path, line_no, "BROKEN_LINK", "Local link target missing")
+                    elif fragment and (not rel or resolved.suffix.lower() == ".md"):
+                        if not resolved.is_file():
+                            self.emit(path, line_no, "BROKEN_LINK", "Heading target is not a file")
+                            continue
+                        if resolved not in self.anchor_cache:
+                            anchor_lines = self.read(resolved, line_no)
+                            if anchor_lines is None:
+                                continue
+                            self.anchor_cache[resolved] = self.anchors(anchor_lines)
+                        if fragment not in self.anchor_cache[resolved]:
+                            self.emit(path, line_no, "BROKEN_ANCHOR", "Markdown heading anchor missing")
+                except (OSError, ValueError):
+                    self.emit(path, line_no, "INVALID_LINK", "Invalid local link target")
+
+    def documentation(self) -> list[Path]:
+        """Enumerate only owned docs; never traverse vendored Spec Kit templates."""
+        paths = [self.root / name for name in ("PRODUCT.md", "README.md", "AGENTS.md")
+                 if (self.root / name).is_file()]
+        for folder in ("docs", "specs"):
+            directory = self.root / folder
+            if not directory.is_dir():
+                continue
+            if not directory.resolve().is_relative_to(self.root):
+                self.emit(directory, 1, "PATH_ESCAPE", "Documentation directory escapes repository")
+                continue
+            for path in directory.rglob("*.md"):
+                paths.append(path)
+                if len(paths) > MAX_DOC_FILES:
+                    self.emit(directory, 1, "DOC_LIMIT", "Too many owned Markdown documents")
+                    return []
+        override = self.root / TEMPLATE
+        if override.is_file():
+            paths.append(override)
+        return sorted(set(paths))
+
+    def document_conventions(self, path: Path, lines: list[str]) -> None:
+        rel = path.relative_to(self.root)
+        parts = rel.parts
+        if parts[0] == "specs":
+            if parts[-1] != "spec.md":
+                return  # Other Spec Kit feature artifacts (plan/tasks) are not Gate 2 specs.
+            if len(parts) != 3 or not FEATURE_DIR.fullmatch(parts[1]):
+                self.emit(path, 1, "BAD_DOC_PATH", "Expected specs/NNN-feature-name/spec.md")
+            budget = SPEC_BUDGET
+        elif rel == TEMPLATE or rel == Path("docs/product/feature-spec-template.md"):
+            budget = TEMPLATE_BUDGET
+        elif parts[0] == "docs":
+            if parts[1] == "adr":
+                if len(parts) != 3 or not ADR_NAME.fullmatch(parts[-1]):
+                    self.emit(path, 1, "BAD_DOC_PATH", "Expected docs/adr/NNNN-kebab-name.md")
+                budget = ADR_BUDGET
+            else:
+                if not DOC_NAME.fullmatch(parts[-1]):
+                    self.emit(path, 1, "BAD_DOC_PATH", "Expected lowercase kebab-case Markdown filename")
+                budget = (DISCOVERY_BUDGET if parts[1] == "product"
+                          or rel == Path("docs/what-why-audit.md") else DOMAIN_BUDGET)
+        elif rel == Path("PRODUCT.md"):
+            budget = DISCOVERY_BUDGET
+        else:
+            return  # README.md and AGENTS.md are recognized root navigation/governance.
+        preferred, review = budget
+        count = len(lines)
+        if count > review:
+            code, message = "LOC_REVIEW", f"{count} LOC exceeds review threshold {review}; human split/retention review recommended"
+        elif count > preferred:
+            code, message = "LOC_PREFERRED", f"{count} LOC exceeds preferred budget {preferred}"
+        else:
+            return
+        self.warnings.append(Issue(rel.as_posix(), 1, code, message))
 
     def run(self) -> list[Issue]:
         self.get_inventory()
@@ -325,17 +458,29 @@ class Validator:
         if not directory.is_dir():
             self.emit(directory, 1, "NO_SPECS", "specs directory is required")
             return sorted(set(self.errors))
-        files = sorted(directory.rglob("spec.md"))
-        if len(files) > MAX_FILES:
-            self.emit(directory, 1, "SPEC_LIMIT", "Too many feature documents")
+        if not directory.resolve().is_relative_to(self.root):
+            self.emit(directory, 1, "PATH_ESCAPE", "Specification directory escapes repository")
             return sorted(set(self.errors))
+        files: list[Path] = []
+        for path in directory.rglob("spec.md"):
+            files.append(path)
+            if len(files) > MAX_FILES:
+                self.emit(directory, 1, "SPEC_LIMIT", "Too many feature documents")
+                return sorted(set(self.errors))
+        files.sort()
         if not files:
             self.emit(directory, 1, "NO_SPECS", "No feature specifications")
         for file in files:
             self.load_spec(file)
         for spec in self.specs.values():
             self.traces(spec)
-            self.links(spec)
+        for path in self.documentation():
+            lines = self.read(path)
+            if lines is None:
+                continue
+            self.document_conventions(path, lines)
+            self.links(path, lines, template=path == self.root / TEMPLATE)
+        self.warnings = sorted(set(self.warnings))
         return sorted(set(self.errors))
 
 
@@ -346,13 +491,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.root.is_dir():
         print("spec-validate: --root must be an existing directory", file=sys.stderr)
         return 2
-    problems = Validator(args.root.resolve()).run()
+    validator = Validator(args.root.resolve())
+    problems = validator.run()
+    warnings = validator.warnings
     for item in problems[:MAX_OUTPUT]:
         print(f"{item.file}:{item.line}: ERROR {item.code}: {item.message}")
-    if len(problems) > MAX_OUTPUT:
-        print(f"... {len(problems) - MAX_OUTPUT} further errors suppressed")
+    for item in warnings[:max(0, MAX_OUTPUT - min(len(problems), MAX_OUTPUT))]:
+        print(f"{item.file}:{item.line}: WARNING {item.code}: {item.message}")
+    if len(problems) + len(warnings) > MAX_OUTPUT:
+        print(f"... {len(problems) + len(warnings) - MAX_OUTPUT} further diagnostics suppressed")
     print(f"spec-validate: {'FAIL' if problems else 'PASS'}; {len(problems)} structural error(s); "
-          "semantic judgment and approval authenticity NOT VERIFIED.")
+          f"{len(warnings)} advisory warning(s); semantic judgment and approval authenticity NOT VERIFIED.")
     return 1 if problems else 0
 
 
