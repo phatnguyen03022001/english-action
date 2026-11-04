@@ -227,7 +227,7 @@ async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
 
     async def one(seed: dict) -> dict:
         seed_id = seed["seedId"]
-        key = _hash([batch["batchId"], seed_id])[:24]
+        key = _hash([seed["recipe"], seed["sourceRef"], seed.get("variantKey", "default"), seed_id])[:24]
         async with semaphore:
             for attempt in range(retries + 1):
                 try:
