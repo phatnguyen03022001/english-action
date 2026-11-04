@@ -172,7 +172,10 @@ def run(argv: list[str] | None = None) -> int:
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return 1 if out["status"] in ("conflict", "invalid", "blocked") else 0
     except Exception as exc:
-        print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        detail = {"status": "error", "message": str(exc)}
+        if opts.operation == "check" and isinstance(exc, json.JSONDecodeError):
+            detail["code"] = "STATE_PARSE_ERROR"
+        print(json.dumps(detail, ensure_ascii=False), file=sys.stderr)
         return 1
 
 

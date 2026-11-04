@@ -53,8 +53,13 @@ def js_json(value: Any) -> str:
         if isinstance(v, list):
             return "[" + ",".join(emit(item) for item in v) + "]"
         if isinstance(v, int):
+            # JSON.parse stores all numbers as IEEE-754 double; integers outside
+            # the safe range are rounded before JSON.stringify emits them.
             if abs(v) > 2**53 - 1:
-                raise ValueError("JSON integer exceeds JavaScript safe integer range")
+                try:
+                    return emit(float(v))
+                except OverflowError as exc:
+                    raise ValueError("JSON number exceeds finite double range") from exc
             return str(v)
         if isinstance(v, float):
             if not math.isfinite(v):

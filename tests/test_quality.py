@@ -63,6 +63,19 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(js_json({"10": "a", "2": "b", "z": 1}), '{"2":"b","10":"a","z":1}')
         self.assertEqual(js_json([1.0, 0.000001, 1.2]), '[1,0.000001,1.2]')
 
+    def test_json_digest_large_integer_uses_javascript_double_semantics(self):
+        self.assertEqual(js_json([10**20, 10**21]), '[100000000000000000000,1e+21]')
+        self.assertEqual(js_json(9007199254740993), '9007199254740992')
+        self.assertEqual(digest({"number": 10**20}),
+                         hashlib.sha256(b'{"number":100000000000000000000}').hexdigest())
+
+    def test_conflict_report_preserves_input_digest_for_node_compatibility(self):
+        bad = candidate(batch="not allowed spaces")
+        _, report = prepare_batch(bad, {}, self.schemas, dry_run=True)
+        self.assertEqual(report["status"], "conflict")
+        self.assertEqual(report["issues"][0]["code"], "BATCH_INVALID")
+        self.assertEqual(report["digest"], digest(bad))
+
     def test_uuidv7_identity_and_nfc_replay(self):
         self.assertRegex(uuidv7(), r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
         first, report = prepare_batch(candidate("tie\u0302\u0301ng"), {}, self.schemas)

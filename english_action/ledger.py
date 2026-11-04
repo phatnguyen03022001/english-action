@@ -90,43 +90,46 @@ def prepare_batch(batch: dict, state: dict, schemas: SchemaDirectory, *, dry_run
         hash_value = digest(batch)
     except ValueError:
         return _result(state, "conflict", "BATCH_INVALID", "Unrepresentable JSON value")
+    def fail(code: str, message: str, **fields):
+        return fail( code, message, digest=hash_value, **fields)
+
     records = batch.get("records")
     if not isinstance(batch.get("batchId"), str) or not _KEY.fullmatch(batch["batchId"]) or not isinstance(records, list) or not 1 <= len(records) <= 10000:
-        return _result(state, "conflict", "BATCH_INVALID", "Invalid batch ID or record count (1..10000)")
+        return fail( "BATCH_INVALID", "Invalid batch ID or record count (1..10000)")
     if "supersedesBatchId" in batch and (not isinstance(batch["supersedesBatchId"], str) or not _KEY.fullmatch(batch["supersedesBatchId"])):
-        return _result(state, "conflict", "SUPERSEDES_BATCH_INVALID", "Invalid superseded batch ID")
+        return fail( "SUPERSEDES_BATCH_INVALID", "Invalid superseded batch ID")
     seen_ids, source_keys, types = set(), set(), {}
     for item in records:
         if not isinstance(item, dict) or not isinstance(item.get("candidateId"), str) or not _KEY.fullmatch(item["candidateId"]) or not isinstance(item.get("entity"), dict):
-            return _result(state, "conflict", "CANDIDATE_INVALID", "Candidate ID or payload invalid")
+            return fail( "CANDIDATE_INVALID", "Candidate ID or payload invalid")
         cid = item["candidateId"]
         if cid in seen_ids:
-            return _result(state, "conflict", "DUPLICATE_CANDIDATE_ID", cid)
+            return fail( "DUPLICATE_CANDIDATE_ID", cid)
         seen_ids.add(cid)
         if "sourceItemKey" in item:
             key = item["sourceItemKey"]
             if not isinstance(key, str) or not _SOURCE_KEY.fullmatch(key):
-                return _result(state, "conflict", "SOURCE_KEY_INVALID", cid)
+                return fail( "SOURCE_KEY_INVALID", cid)
             if key in source_keys:
-                return _result(state, "conflict", "DUPLICATE_SOURCE_ITEM_KEY", key)
+                return fail( "DUPLICATE_SOURCE_ITEM_KEY", key)
             source_keys.add(key)
         p = _prefix(item)
         if p not in PREFIXES:
-            return _result(state, "conflict", "ENTITY_TYPE_UNKNOWN", cid)
+            return fail( "ENTITY_TYPE_UNKNOWN", cid)
         if "_id" in item["entity"] or "schemaVersion" in item["entity"]:
-            return _result(state, "conflict", "CANONICAL_ID_IN_CANDIDATE", "Provide canonical IDs only via persistent mapping")
+            return fail( "CANONICAL_ID_IN_CANDIDATE", "Provide canonical IDs only via persistent mapping")
         if item["entity"].get("editorialStatus") == "verified":
-            return _result(state, "conflict", "SELF_VERIFICATION_FORBIDDEN", cid)
+            return fail( "SELF_VERIFICATION_FORBIDDEN", cid)
         types[cid] = p
     if not state:
         state = {}
     if state and not state_valid(state):
-        return _result(state, "conflict", "STATE_VERSION_INVALID", "Unrecognized persistent state format")
+        return fail( "STATE_VERSION_INVALID", "Unrecognized persistent state format")
     prior = state.get("batches", {}).get(batch["batchId"])
     if prior:
         if prior.get("digest") == hash_value:
             return _result(state, "replayed", digest=hash_value, batchId=batch["batchId"], duplicates=[], missingEvidence=[], reviewQueue=[])
-        return _result(state, "conflict", "CHANGED_BATCH_CONFLICT", "Batch ID already processed with another digest")
+        return fail( "CHANGED_BATCH_CONFLICT", "Batch ID already processed with another digest")
     next_state = deepcopy(blank_state() | state)
     by_id = {r["_id"]: r for r in next_state["records"]}
     candidates = {item["candidateId"]: item["entity"] for item in records}
@@ -136,47 +139,47 @@ def prepare_batch(batch: dict, state: dict, schemas: SchemaDirectory, *, dry_run
         claim, ev = item["entity"]["claim"], item["entity"]
         ref = claim.get("subjectId")
         if ref not in ev.get("assertionIds", []):
-            return _result(state, "conflict", "EVIDENCE_SUBJECT_MISMATCH", "Subject absent from assertionIds")
+            return fail( "EVIDENCE_SUBJECT_MISMATCH", "Subject absent from assertionIds")
         subject = candidates.get(ref[10:]) if isinstance(ref, str) and ref.startswith("candidate:") else by_id.get(ref)
         if not subject:
-            return _result(state, "conflict", "EVIDENCE_SUBJECT_NOT_FOUND", str(ref))
+            return fail( "EVIDENCE_SUBJECT_NOT_FOUND", str(ref))
         value = value_at(subject, claim.get("fieldPath"))
         if value is MISSING:
-            return _result(state, "conflict", "EVIDENCE_PATH_MISMATCH", str(claim.get("fieldPath")))
+            return fail( "EVIDENCE_PATH_MISMATCH", str(claim.get("fieldPath")))
         if digest(value) != claim.get("valueDigest"):
-            return _result(state, "conflict", "EVIDENCE_SOURCE_DIGEST_MISMATCH", item["candidateId"])
+            return fail( "EVIDENCE_SOURCE_DIGEST_MISMATCH", item["candidateId"])
     mappings, reused, occupied = {}, set(), set(by_id)
     for item in records:
         cid = item["candidateId"]
         mapping_key = batch["batchId"] + "#" + cid
         if mapping_key in next_state["mappings"]:
-            return _result(state, "conflict", "MAPPING_COLLISION", mapping_key)
+            return fail( "MAPPING_COLLISION", mapping_key)
         known = next_state["sourceMappings"].get(item.get("sourceItemKey"))
         previous = next_state["mappings"].get(batch.get("supersedesBatchId", "") + "#" + cid)
         if known:
             if previous and previous["canonicalId"] != known["canonicalId"]:
-                return _result(state, "conflict", "IDENTITY_MAPPING_CONFLICT", cid)
+                return fail( "IDENTITY_MAPPING_CONFLICT", cid)
             if known["contentDigest"] != digest(item["entity"]) or not known["canonicalId"].startswith(types[cid] + "_"):
-                return _result(state, "conflict", "SOURCE_ITEM_CHANGED", cid)
+                return fail( "SOURCE_ITEM_CHANGED", cid)
             selected = known["canonicalId"]
         elif previous:
             selected = previous["canonicalId"]
             if not selected.startswith(types[cid] + "_"):
-                return _result(state, "conflict", "SUPERSEDED_MAPPING_INVALID", cid)
+                return fail( "SUPERSEDED_MAPPING_INVALID", cid)
         else:
             selected = types[cid] + "_" + (_preview(hash_value, cid) if dry_run else uuidv7())
             if selected in occupied:
-                return _result(state, "conflict", "ID_COLLISION", selected)
+                return fail( "ID_COLLISION", selected)
         if selected in occupied and not (known or previous):
-            return _result(state, "conflict", "ID_COLLISION", selected)
+            return fail( "ID_COLLISION", selected)
         if known or previous:
             if selected not in by_id:
-                return _result(state, "conflict", "SOURCE_MAPPING_DANGLING", cid)
+                return fail( "SOURCE_MAPPING_DANGLING", cid)
             reused.add(cid)
         occupied.add(selected)
         mappings[cid] = selected
     if len(set(mappings.values())) != len(mappings):
-        return _result(state, "conflict", "CANONICAL_ID_REUSED_IN_BATCH", "Two candidates share an identity")
+        return fail( "CANONICAL_ID_REUSED_IN_BATCH", "Two candidates share an identity")
     try:
         materialized = []
         for item in records:
@@ -186,15 +189,15 @@ def prepare_batch(batch: dict, state: dict, schemas: SchemaDirectory, *, dry_run
             entity = {**entity, "_id": mappings[item["candidateId"]], "schemaVersion": "2.0.0"}
             materialized.append(entity)
     except (ValueError, TypeError) as exc:
-        return _result(state, "conflict", "UNRESOLVED_REFERENCE", str(exc))
+        return fail( "UNRESOLVED_REFERENCE", str(exc))
     for item, entity in zip(records, materialized):
         if item["candidateId"] in reused and digest(_projection(entity)) != digest(_projection(by_id[entity["_id"]])):
-            return _result(state, "conflict", "BATCH_REVISION_REQUIRED", item["candidateId"])
+            return fail( "BATCH_REVISION_REQUIRED", item["candidateId"])
     newly_created = [entity for item, entity in zip(records, materialized) if item["candidateId"] not in reused]
     full = next_state["records"] + newly_created
     validation = validate_dataset(full, schemas, publication_issue_limit=0)
     if not validation["valid"]:
-        return _result(state, "conflict", "VALIDATION_FAILED", "Candidate graph/schema rejected", **{"details": validation["issues"]})
+        return fail( "VALIDATION_FAILED", "Candidate graph/schema rejected", **{"details": validation["issues"]})
     missing_evidence = [x["_id"] for x in materialized if x["_id"].split("_", 1)[0] not in ("src", "evd", "rev", "dec") and not x.get("evidenceIds")]
     review_queue = sorted(x["_id"] for x in materialized if x.get("editorialStatus") != "rejected")
     if dry_run:
