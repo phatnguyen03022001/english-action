@@ -11,7 +11,7 @@ import stat
 import sys
 
 from .contracts import SchemaDirectory, validate_dataset
-from .schema_generation import check_schemas
+from .schema_generation import check_schemas, write_schemas
 from .ledger import (bind_evidence, blank_state, prepare_batch, promote_candidates,
                      revise_candidates, state_valid)
 
@@ -129,7 +129,7 @@ def _atomic_save(path: Path, state: dict) -> None:
 
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="english-quality")
-    parser.add_argument("operation", choices=("validate", "prepare", "bind-evidence", "revise", "promote", "check", "schemas-check"))
+    parser.add_argument("operation", choices=("validate", "prepare", "bind-evidence", "revise", "promote", "check", "schemas-check", "schemas-generate"))
     parser.add_argument("--input", help="Path to candidate request JSON")
     parser.add_argument("--state", default=".draft/candidates-state.json")
     parser.add_argument("--schemas", default="schemas", help="Consumer-owned schema root with v1/ and v2/")
@@ -141,6 +141,10 @@ def run(argv: list[str] | None = None) -> int:
         if opts.operation == "schemas-check":
             check_schemas(opts.schemas)
             print(json.dumps({"status": "valid", "schemasValid": True}))
+            return 0
+        if opts.operation == "schemas-generate":
+            write_schemas(opts.schemas, opts.version)
+            print(json.dumps({"status": "generated", "version": opts.version}))
             return 0
         schema = SchemaDirectory(opts.schemas, opts.version)
         path = _path_safe(opts.state)

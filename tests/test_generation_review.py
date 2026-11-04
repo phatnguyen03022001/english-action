@@ -50,6 +50,21 @@ class SchemaGenerationTest(unittest.TestCase):
             directory.mkdir()
             (directory / "vocabularies.json").write_text(json.dumps(registry), encoding="utf-8")
 
+    def test_explicit_generator_writes_only_selected_version(self):
+        from english_action.schema_generation import write_schemas
+        original_v2 = (self.root / "v2" / "vocabularies.json").read_bytes()
+        write_schemas(self.root, "v1")
+        self.assertTrue((self.root / "v1" / "common.schema.json").exists())
+        self.assertFalse((self.root / "v2" / "common.schema.json").exists())
+        write_schemas(self.root, "v2")
+        check_schemas(self.root)
+        self.assertEqual((self.root / "v2" / "vocabularies.json").read_bytes(), original_v2)
+        path = self.root / "v2" / "lexical-entry.schema.json"
+        path.unlink()
+        path.symlink_to(self.root / "v1" / "lexical-entry.schema.json")
+        with self.assertRaisesRegex(ValueError, "Unsafe generated schema target"):
+            write_schemas(self.root, "v2")
+
     def test_pure_generator_does_not_mutate_registry_or_v1(self):
         registry = registry_v1()
         original = deepcopy(registry)

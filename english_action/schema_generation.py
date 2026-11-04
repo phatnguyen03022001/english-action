@@ -274,3 +274,49 @@ def check_schemas(root: str | Path) -> None:
             path = directory / name
             if path.is_symlink() or not path.is_file() or path.read_text(encoding="utf-8") != content:
                 raise ValueError(version + " schema drift: " + name)
+
+
+def write_schemas(root: str | Path, version: str) -> None:
+    """Explicit, version-scoped schema generation with safe per-file replacement.
+
+    Not called by check_schemas or by validation. The private consumer is the
+    only owner of real registries and generated schema files.
+    """
+    import os
+    import secrets
+    import stat
+
+    if version not in ("v1", "v2"):
+        raise ValueError("Unsupported schema version")
+    base = Path(root)
+    directory = base / version
+    if base.is_symlink() or directory.is_symlink() or not directory.is_dir():
+        raise ValueError("Unsafe schema directory")
+    expected = generate_schema_pairs(base)[version]
+    present = sorted(p.name for p in directory.glob("*.schema.json"))
+    if any(name not in expected for name in present):
+        raise ValueError(version + " schema inventory drift")
+    for name, serialized in expected.items():
+        target = directory / name
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise ValueError("Unsafe generated schema target")
+        temporary = directory / ("." + name + "." + secrets.token_hex(8) + ".tmp")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(temporary, flags, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(serialized)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+            if target.is_symlink():
+                raise ValueError("Unsafe generated schema target")
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists() and not temporary.is_symlink():
+                temporary.unlink()
+    directory_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
