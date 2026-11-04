@@ -749,17 +749,39 @@ def evaluate_publication(records: list[dict], options: Mapping[str, Any] | None 
             add("PUBLICATION_SCOPE_INVALID", "", "subjectIds", "Subject scope must be an array")
             scope = []
         wanted: set[str] = set()
+        constructions_by_sense: dict[str, list[str]] = defaultdict(list)
+        for item in records:
+            if item["_id"].startswith("con_") and item.get("senseId"):
+                constructions_by_sense[item["senseId"]].append(item["_id"])
         stack = list(scope)
         while stack:
             identifier = stack.pop()
-            if identifier in wanted:
-                continue
             r = by_id.get(identifier)
             if r is None:
                 add("PUBLICATION_SUBJECT_NOT_FOUND", str(identifier), "subjectIds", "Unknown publication subject")
                 continue
+            if identifier in wanted:
+                continue
             wanted.add(identifier)
-            stack.extend(x for _, x, _ in _refs(r) if x in by_id and x not in wanted)
+            kind = r["_id"].split("_", 1)[0]
+            references = []
+            if kind in ("sns", "frm", "ety"):
+                references.append(r.get("entryId"))
+            if kind == "con":
+                references.append(r.get("senseId"))
+            if kind == "col":
+                references.append(r.get("anchorSenseId"))
+            if kind == "eqv":
+                references.extend((r.get("sourceSenseId"), r.get("targetSenseId")))
+            if kind == "rel":
+                references.extend((r.get("sourceId"), r.get("targetId")))
+            if kind == "lex":
+                references.extend(r.get("familyIds", ()))
+            if kind == "sns":
+                references.extend(r.get("topicIds", ()))
+                references.extend(r.get("constructionIds", ()))
+                references.extend(constructions_by_sense.get(identifier, ()))
+            stack.extend(ref for ref in references if ref)
     else:
         wanted = {r["_id"] for r in records if publishable(r)}
     published = [r for r in records if publishable(r) and r["_id"] in wanted]
@@ -845,6 +867,23 @@ def evaluate_publication(records: list[dict], options: Mapping[str, Any] | None 
                     add("EXAMPLE_EVIDENCE_MISSING", identifier, f"examples/{n}", "Example evidence missing")
                 if ex.get("vi") and ex.get("translationEvidenceStatus") != "independently_reviewed":
                     add("EXAMPLE_TRANSLATION_UNREVIEWED", identifier, f"examples/{n}/vi", "Example translation not approved")
+    # Lifecycle decisions affecting selected claims require actual owner-appointed
+    # LER authority even after structural audits succeed.
+    for decision in records:
+        if not decision["_id"].startswith("dec_") or decision.get("decisionEffect") != "lifecycle_transition":
+            continue
+        subjects = decision.get("subjectIds", ())
+        if not any(subject in wanted for subject in subjects):
+            continue
+        audit = decision.get("transitionAudit") or {}
+        if "incomingEdges" not in audit:
+            add("LIFECYCLE_AUDIT_INCOMPLETE", decision["_id"], "transitionAudit",
+                "Historical edge adjudication required")
+        if not reviewer_appointed(opts, decision.get("reviewerId"), "lead_editorial",
+                                  decision.get("appointmentReference"),
+                                  subjects[0] if subjects else None):
+            add("LIFECYCLE_AUTHORITY_UNVERIFIED", decision["_id"], "reviewerId",
+                "Decision appointment not authenticated")
     # TASK 06 is not private-consumer parity certified. No public Engine
     # caller may turn local quality checks into permission to publish.
     add("QUALITY_PARITY_NOT_VERIFIED", "", "publication", "Private consumer parity and external authority boundary not yet certified")

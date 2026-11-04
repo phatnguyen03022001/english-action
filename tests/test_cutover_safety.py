@@ -189,5 +189,37 @@ class CutoverSafetyTests(unittest.TestCase):
                 self.assertIn("QUALITY_PARITY_NOT_VERIFIED", [i["code"] for i in report["issues"]])
 
 
+
+    def test_scoped_sense_publication_follows_inbound_construction_and_requires_approval(self):
+        root = lex(editorialStatus="verified")
+        sense = {"_id": "sns_01940000-0000-7000-8000-000000000121",
+                 "schemaVersion": "2.0.0", "lifecycleStatus": "active",
+                 "editorialStatus": "verified", "entryId": root["_id"],
+                 "definition": "Synthetic meaning"}
+        con = {"_id": "con_01940000-0000-7000-8000-000000000122",
+               "schemaVersion": "2.0.0", "lifecycleStatus": "active",
+               "editorialStatus": "draft", "senseId": sense["_id"],
+               "pattern": "synthetic"}
+        other = lex("unrelated", idx="000000000123", editorialStatus="disputed")
+        report = evaluate_publication([root, sense, con, other],
+                                      {"subject_ids": [sense["_id"]]})
+        self.assertFalse(report["eligible"])
+        self.assertTrue(any(i["entityId"] == con["_id"] and i["code"] == "PUBLICATION_NOT_VERIFIED"
+                            for i in report["issues"]))
+        self.assertFalse(any(i["entityId"] == other["_id"] for i in report["issues"]))
+
+    def test_lifecycle_publication_never_trusts_self_declared_editorial_decision(self):
+        root = lex(editorialStatus="verified")
+        decision = {"_id": "dec_01940000-0000-7000-8000-000000000124",
+                    "lifecycleStatus": "active", "editorialStatus": "draft",
+                    "decisionEffect": "lifecycle_transition",
+                    "subjectIds": [root["_id"]], "reviewerId": "unappointed",
+                    "appointmentReference": "unverified"}
+        report = evaluate_publication([root, decision], {"subject_ids": [root["_id"]]})
+        codes = [i["code"] for i in report["issues"]]
+        self.assertIn("LIFECYCLE_AUDIT_INCOMPLETE", codes)
+        self.assertIn("LIFECYCLE_AUTHORITY_UNVERIFIED", codes)
+        self.assertFalse(report["eligible"])
+
 if __name__ == "__main__":
     unittest.main()
