@@ -203,7 +203,7 @@ class OpenAIWorker:
         self.model, self._key = model, api_key
 
     async def generate(self, seed: dict) -> dict:
-        request = {"model": self.model, "temperature": 0,
+        request = {"model": self.model, "max_completion_tokens": 800,
                    "response_format": {"type": "json_object"},
                    "messages": [
                        {"role": "system", "content": "Generate exactly one unreviewed English learning content item as a JSON object. Return only the recipe-specific content object, never assert evidence, rights or editorial approval."},
@@ -321,6 +321,22 @@ async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
 def persist(batch: dict, generated: list[dict], path: str, quality: dict) -> dict:
     """Single writer atomic CAS; append-only before/after history; replay immutable."""
     _check_batch(batch)
+    if len(generated) != len(batch["seeds"]):
+        raise ValueError("Incomplete generated batch")
+    for item, seed in zip(generated, batch["seeds"]):
+        expected_id = "spn_" + _hash([seed["recipe"], seed["sourceRef"],
+                                       seed.get("variantKey", "default"), seed["seedId"]])[:24]
+        if (not isinstance(item, dict) or item.get("seedId") != seed["seedId"]
+                or item.get("candidateId") != expected_id
+                or item.get("status") not in ("REJECTED", "HOLD")):
+            raise ValueError("Unsafe generated candidate")
+        if item["status"] == "HOLD" and (
+                item.get("recipe") != seed["recipe"] or item.get("sourceRef") != seed["sourceRef"]
+                or item.get("sourceRevision") != seed["sourceRevision"]
+                or item.get("contentHash") != _hash(item.get("content"))
+                or validate_content(seed["recipe"], item.get("content"))
+                or item.get("unresolvedEvidence") != list(UNRESOLVED)):
+            raise ValueError("Generated draft integrity invalid")
     state_path = _path_safe(path)
     input_hash = _hash(batch)
     with _state_lock(state_path):
