@@ -91,7 +91,7 @@ def prepare_batch(batch: dict, state: dict, schemas: SchemaDirectory, *, dry_run
     except ValueError:
         return _result(state, "conflict", "BATCH_INVALID", "Unrepresentable JSON value")
     def fail(code: str, message: str, **fields):
-        return fail( code, message, digest=hash_value, **fields)
+        return _result(state, "conflict", code, message, digest=hash_value, **fields)
 
     records = batch.get("records")
     if not isinstance(batch.get("batchId"), str) or not _KEY.fullmatch(batch["batchId"]) or not isinstance(records, list) or not 1 <= len(records) <= 10000:
