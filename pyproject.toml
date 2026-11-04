@@ -11,6 +11,7 @@ dependencies = ["jsonschema>=4.23,<5"]
 
 [project.scripts]
 english-quality = "english_action.cli:main"
+english-spawn = "english_action.spawn:main"
 
 [tool.setuptools.packages.find]
 include = ["english_action*"]
