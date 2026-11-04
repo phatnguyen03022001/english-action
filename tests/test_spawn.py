@@ -1,5 +1,6 @@
 """Public synthetic-only tests for the P0-a draft-only producer."""
 import asyncio
+from hashlib import sha256
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -128,6 +129,25 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
         result = await generate(batch(seeds), SyntheticWorker())
         self.assertEqual([r["status"] for r in result], ["HOLD", "REJECTED"])
 
+    async def test_local_media_bytes_hash_and_path_are_verified(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            media = root / "audio.wav"
+            media.write_bytes(b"synthetic-only-wave-test-data")
+            fixture = seed("K1-16")
+            asset = fixture["fixture"]["audio"]
+            asset["sha256"] = sha256(media.read_bytes()).hexdigest()
+            asset["locator"] = "audio.wav"
+            value = await generate(batch([fixture]), SyntheticWorker(), media_root=d)
+            self.assertEqual(value[0]["status"], "HOLD")
+            asset["sha256"] = "f" * 64
+            value = await generate(batch([fixture]), SyntheticWorker(), media_root=d)
+            self.assertEqual(value[0]["issues"], ["MEDIA_HASH_MISMATCH"])
+            asset["sha256"] = sha256(media.read_bytes()).hexdigest()
+            asset["locator"] = "../unsafe.wav"
+            value = await generate(batch([fixture]), SyntheticWorker(), media_root=d)
+            self.assertEqual(value[0]["issues"], ["MEDIA_PATH_UNSAFE"])
+
     async def test_private_contract_rejects_invalid(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "schema.json"
@@ -173,6 +193,19 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(len(json.loads(Path(path).read_text())["history"]), 2)
             with self.assertRaisesRegex(ValueError, "BATCH_REPLAY_CONFLICT"):
                 persist({**a, "seeds": [{**a["seeds"][0], "request": {"changed": True}}]}, generated, path, q)
+
+    def test_store_rejects_incomplete_and_non_hold_candidates(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = batch([seed("N1-01")])
+            good_items = asyncio.run(generate(a, SyntheticWorker()))
+            target = str(Path(d) / "state.json")
+            with self.assertRaisesRegex(ValueError, "Incomplete"):
+                persist(a, [], target, {"status": "NOT_VERIFIED"})
+            forged = deepcopy(good_items)
+            forged[0]["status"] = "PUBLISHED"
+            with self.assertRaisesRegex(ValueError, "Unsafe"):
+                persist(a, forged, target, {"status": "NOT_VERIFIED"})
+            self.assertFalse(Path(target).exists())
 
     def test_cli_requires_authorized_provider_and_keeps_private_contract(self):
         with tempfile.TemporaryDirectory() as d:
