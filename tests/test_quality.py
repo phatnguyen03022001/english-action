@@ -125,6 +125,70 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(pub["publication"]["issues"]), 3)
         self.assertFalse(pub["publication"]["eligible"])
 
+    def test_v1_schema_pattern_matches_ajv_message(self):
+        path = self.root / "v1" / "lexical-sense.schema.json"
+        definition = json.loads(path.read_text(encoding="utf-8"))
+        definition["properties"]["entryId"] = {"type": "string", "pattern": "^lex_"}
+        path.write_text(json.dumps(definition), encoding="utf-8")
+        schemas = SchemaDirectory(self.root, "v1")
+        sense = {"_id": "sns_01940000-0000-7000-8000-000000000002",
+                 "schemaVersion": "1.0.0", "lifecycleStatus": "active",
+                 "editorialStatus": "draft",
+                 "entryId": "sns_01940000-0000-7000-8000-000000000001"}
+        result = validate_dataset([sense], schemas, version="v1")
+        self.assertEqual(result["stage"], "schema")
+        self.assertEqual(result["issues"][0]["message"], 'pattern: must match pattern "^lex_"')
+
+    def test_authenticated_synthetic_claims_reach_only_migration_guard(self):
+        # This test authenticates a synthetic domain decision, NEVER a real publication.
+        subject = lex(editorialStatus="verified")
+        source = {"_id": "src_01940000-0000-7000-8000-000000000010",
+                  "lifecycleStatus": "active", "editorialStatus": "draft",
+                  "rights": {"status": "redistributable", "scopes": ["dictionary_publication"],
+                             "reviewerId": "rights-reviewer", "permissionReference": "rights-appointment"}}
+        paths = ["/language", "/lemma", "/pos", "/entryKind"]
+        evidence = []
+        for n, path in enumerate(paths):
+            evidence.append({"_id": f"evd_01940000-0000-7000-8000-{n+20:012x}",
+                             "sourceId": source["_id"], "assertionIds": [subject["_id"]],
+                             "lifecycleStatus": "active", "reviewStatus": "accepted",
+                             "independence": "independent_reviewed",
+                             "claim": {"subjectId": subject["_id"], "fieldPath": path,
+                                       "valueDigest": digest(value_at(subject, path)),
+                                       "specificity": "exact_value"}})
+        subject["evidenceIds"] = [item["_id"] for item in evidence]
+        review = {"_id": "rev_01940000-0000-7000-8000-000000000030",
+                  "lifecycleStatus": "active", "outcome": "accepted",
+                  "reviewerId": "lead", "role": "lead_editorial",
+                  "appointmentReference": "lead-appointment", "subjectIds": [subject["_id"]],
+                  "claims": [item["claim"] for item in evidence]}
+        def appointment(key, reviewer, role, subject_id, field_paths=None):
+            return {"appointmentKey": key, "reviewerId": reviewer, "role": role,
+                    "appointedByOwnerId": "owner", "ownerAttestationRef": "synthetic-test",
+                    "effectiveFrom": "2026-01-01T00:00:00Z",
+                    "scope": {"subjectIds": [subject_id],
+                              **({"fieldPaths": field_paths} if field_paths else {})}}
+        trust = {"owner_id": "owner", "effective_at": "2026-11-04T00:00:00Z",
+                 "appointments": [appointment("lead-appointment", "lead", "lead_editorial", subject["_id"], paths),
+                                  appointment("rights-appointment", "rights-reviewer", "rights", source["_id"])],
+                 "verify_owner_attestation": lambda **kwargs: True,
+                 "verify_evidence": lambda **kwargs: True,
+                 "verify_rights": lambda **kwargs: True}
+        records = [subject, source, *evidence, review]
+        ok = evaluate_publication(records, trust)
+        self.assertFalse(ok["eligible"])
+        self.assertEqual([x["code"] for x in ok["issues"]], ["QUALITY_PARITY_NOT_VERIFIED"])
+        self.assertEqual(ok["issueCount"], 1)
+        source["rights"]["revokedAt"] = "2026-11-03T00:00:00Z"
+        revoked = evaluate_publication(records, trust)
+        self.assertIn("SOURCE_RIGHTS_UNVERIFIED", [x["code"] for x in revoked["issues"]])
+        self.assertFalse(revoked["eligible"])
+        source["rights"].pop("revokedAt")
+        trust["verify_owner_attestation"] = lambda **kwargs: False
+        invalid = evaluate_publication(records, trust)
+        self.assertIn("LER_AUTHORITY_UNVERIFIED", [x["code"] for x in invalid["issues"]])
+        self.assertFalse(invalid["eligible"])
+
     def test_nullable_topic_parent_is_not_a_reference(self):
         from english_action.contracts import graph_issues
         topic = {"_id": "top_01940000-0000-7000-8000-000000000001",
