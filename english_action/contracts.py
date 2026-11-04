@@ -735,7 +735,11 @@ def evaluate_publication(records: list[dict], options: Mapping[str, Any] | None 
     if limit is not None and (type(limit) is not int or limit < 0):
         raise ValueError("publicationIssueLimit must be non-negative integer or null")
     by_id = {r["_id"]: r for r in records}
-    problems: list[dict] = graph_issues(records)
+    # Node publication counts the V1 registry graph, not the V2-only storage extras.
+    # External authority remains independently fail-closed.
+    vocabulary = opts.get("v1_vocabulary")
+    problems: list[dict] = (validate_v1_graph(records, vocabulary)["issues"]
+                            if isinstance(vocabulary, dict) else graph_issues(records))
     def add(code, identifier="", path="", msg=""):
         problems.append(issue(code, identifier, path, msg))
     publishable = lambda r: r["_id"].split("_", 1)[0] not in {"src", "evd", "rev", "dec"}
@@ -862,6 +866,6 @@ def validate_dataset(records_or_dataset: Any, schemas: SchemaDirectory, *, versi
         return validate_v1_graph(records, schemas.vocabularies, publication=publication)
     from .v2_validation import validate_v2_graph
     graph = validate_v2_graph(records, schemas.v1_vocabulary)
-    publication_result = evaluate_publication(records, limit=publication_issue_limit)
+    publication_result = evaluate_publication(records, {"v1_vocabulary": schemas.v1_vocabulary}, limit=publication_issue_limit)
     issues = sort_issues(graph + (publication_result["issues"] if publication else []))
     return {"valid": not issues and (not publication or publication_result["eligible"]), "stage": "graph", "issues": issues, "publication": publication_result}
