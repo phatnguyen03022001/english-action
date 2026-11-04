@@ -172,7 +172,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(accepted["drafts"], 1)
             self.assertEqual(len(json.loads(Path(path).read_text())["history"]), 2)
             with self.assertRaisesRegex(ValueError, "BATCH_REPLAY_CONFLICT"):
-                persist({**a, "seeds": []}, generated, path, q)
+                persist({**a, "seeds": [{**a["seeds"][0], "request": {"changed": True}}]}, generated, path, q)
 
     def test_cli_requires_authorized_provider_and_keeps_private_contract(self):
         with tempfile.TemporaryDirectory() as d:
