@@ -24,6 +24,7 @@ LINK_DEF = re.compile(r"^\s{0,3}\[[^\]\n]+\]:\s*(?P<dest><[^>]+>|\S+)")
 HTML_ANCHOR = re.compile(r'<a\b[^>]*\b(?:id|name)=["\']([^"\']+)["\']', re.I)
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 DOC_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\.md\Z")
+BUSINESS_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 ADR_NAME = re.compile(r"\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md\Z")
 TEMPLATE = Path(".specify/templates/overrides/spec-template.md")
 REF = re.compile(r"(?<![\w-])(?P<kind>US|NFR|FR|SC)-?(?P<num>\d{1,3})(?P<scenario>\.\d+)?(?P<tail>(?:\s*[-–/]\s*\d+(?:\.\d+)?)*)")
@@ -101,7 +102,14 @@ class Validator:
             return None
 
     def get_inventory(self) -> None:
-        path = self.root / "docs/product/capabilities.md"
+        modern = self.root / "knowledge/product/capability-map.md"
+        legacy = self.root / "docs/product/capabilities.md"
+        if modern.is_file() and legacy.is_file():
+            self.emit(legacy, 1, "DUPLICATE_INVENTORY",
+                      "Legacy and Knowledge Base capability inventories both present")
+        # A migrated product directory must have its own canonical inventory.
+        # Retain legacy support for existing callers without that directory.
+        path = modern if (self.root / "knowledge/product").is_dir() else legacy
         if not path.is_file():
             self.emit(path, 1, "NO_INVENTORY", "Canonical capability inventory missing")
             return
@@ -400,7 +408,7 @@ class Validator:
         """Enumerate only owned docs; never traverse vendored Spec Kit templates."""
         paths = [self.root / name for name in ("PRODUCT.md", "README.md", "AGENTS.md")
                  if (self.root / name).is_file()]
-        for folder in ("docs", "specs"):
+        for folder in ("docs", "knowledge", "specs"):
             directory = self.root / folder
             if not directory.is_dir():
                 continue
@@ -438,6 +446,40 @@ class Validator:
                     self.emit(path, 1, "BAD_DOC_PATH", "Expected lowercase kebab-case Markdown filename")
                 budget = (DISCOVERY_BUDGET if parts[1] == "product"
                           or rel == Path("docs/what-why-audit.md") else DOMAIN_BUDGET)
+        elif parts[0] == "knowledge":
+            if rel == Path("knowledge/README.md"):
+                return  # Navigation entrypoint, not a feature specification.
+            if len(parts) < 3:
+                self.emit(path, 1, "BAD_DOC_PATH", "Unexpected Knowledge Base document")
+                return
+            group = parts[1]
+            if group == "features":
+                if (len(parts) == 4 and parts[-1] == "README.md"
+                        and BUSINESS_NAME.fullmatch(parts[2])):
+                    return  # Optional domain navigation.
+                if (len(parts) not in (5, 6) or parts[-1] != "spec.md"
+                        or not all(BUSINESS_NAME.fullmatch(name) for name in parts[2:-1])):
+                    self.emit(path, 1, "BAD_DOC_PATH",
+                              "Expected knowledge/features/domain/feature[/subfeature]/spec.md")
+                budget = DOMAIN_BUDGET
+            elif group == "product" and len(parts) == 3 and DOC_NAME.fullmatch(parts[-1]):
+                budget = DISCOVERY_BUDGET
+            elif group == "architecture":
+                if len(parts) == 4 and parts[2] == "decisions":
+                    if not ADR_NAME.fullmatch(parts[-1]):
+                        self.emit(path, 1, "BAD_DOC_PATH",
+                                  "Expected knowledge/architecture/decisions/NNNN-name.md")
+                    budget = ADR_BUDGET
+                elif len(parts) == 3 and DOC_NAME.fullmatch(parts[-1]):
+                    budget = DOMAIN_BUDGET
+                else:
+                    self.emit(path, 1, "BAD_DOC_PATH", "Unexpected architecture document")
+                    budget = DOMAIN_BUDGET
+            elif group == "operations" and len(parts) == 3 and DOC_NAME.fullmatch(parts[-1]):
+                budget = DOMAIN_BUDGET
+            else:
+                self.emit(path, 1, "BAD_DOC_PATH", "Unexpected Knowledge Base document")
+                budget = DOMAIN_BUDGET
         elif rel == Path("PRODUCT.md"):
             budget = DISCOVERY_BUDGET
         else:

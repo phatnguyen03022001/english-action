@@ -149,6 +149,65 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ERROR NO_INVENTORY:", result.stdout)
 
+    def test_knowledge_layout_inventory_and_references_pass(self) -> None:
+        modern = self.document(
+            "knowledge/product/capability-map.md",
+            (self.root / "docs/product/capabilities.md").read_text(encoding="utf-8"),
+        )
+        (self.root / "docs/product/capabilities.md").unlink()
+        self.document("knowledge/README.md", "# Knowledge Base\n\n"
+                      "[Capability map](product/capability-map.md)\n"
+                      "[Practice](features/learning/practice-methods/spec.md#ownership)\n")
+        self.document("knowledge/features/learning/practice-methods/spec.md",
+                      "# Practice methods\n\n## Ownership\n"
+                      "[Inventory](../../../product/capability-map.md)\n")
+        self.document("knowledge/architecture/decisions/0001-synthetic-boundary.md",
+                      "# Synthetic ADR\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(modern.is_file())
+        self.assertIn("PASS; 0 structural error(s)", result.stdout)
+
+    def test_knowledge_links_are_actually_scanned(self) -> None:
+        self.document("knowledge/product/capability-map.md",
+                      (self.root / "docs/product/capabilities.md").read_text(encoding="utf-8"))
+        (self.root / "docs/product/capabilities.md").unlink()
+        self.document("knowledge/features/learning/practice-methods/spec.md",
+                      "# Practice\n[Missing](../../../product/absent.md)\n"
+                      "[No anchor](../../../product/capability-map.md#absent)\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("knowledge/features/learning/practice-methods/spec.md:2: ERROR BROKEN_LINK:", result.stdout)
+        self.assertIn("knowledge/features/learning/practice-methods/spec.md:3: ERROR BROKEN_ANCHOR:", result.stdout)
+
+    def test_migrated_product_directory_cannot_silently_use_old_inventory(self) -> None:
+        self.document("knowledge/product/overview.md", "# Product\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("knowledge/product/capability-map.md:1: ERROR NO_INVENTORY:", result.stdout)
+
+    def test_duplicate_inventories_fail(self) -> None:
+        self.document("knowledge/product/capability-map.md",
+                      (self.root / "docs/product/capabilities.md").read_text(encoding="utf-8"))
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ERROR DUPLICATE_INVENTORY:", result.stdout)
+
+    def test_invalid_knowledge_feature_depth_and_naming_fail(self) -> None:
+        self.document("knowledge/features/Learning/bad/spec.md", "# Invalid domain\n")
+        self.document("knowledge/features/learning/practice/too/deep/spec.md", "# Invalid depth\n")
+        self.document("knowledge/architecture/decisions/unnumbered.md", "# Invalid ADR\n")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(result.stdout.count("ERROR BAD_DOC_PATH:"), 3, result.stdout)
+
+    def test_new_feature_loc_budget_remains_advisory(self) -> None:
+        self.document("knowledge/features/learning/practice/spec.md",
+                      "# Methods\n" + "\n" * 401)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("knowledge/features/learning/practice/spec.md:1: WARNING LOC_PREFERRED:", result.stdout)
+
     def test_read_only_and_bounded_diagnostics(self) -> None:
         def snapshot() -> dict[str, bytes]:
             return {str(p.relative_to(self.root)): hashlib.sha256(p.read_bytes()).digest()
