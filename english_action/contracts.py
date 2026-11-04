@@ -164,7 +164,11 @@ class SchemaDirectory:
                     m = re.search(r"'([^']+)' is a required property", e.message)
                     if m:
                         suffix += m.group(1)
-                failures.append(issue("SCHEMA_INVALID", identifier, f"records/{i}{suffix}", f"{e.validator}: {e.message}"))
+                # jsonschema and Ajv describe regex failures differently; preserve
+                # the Node CLI's exact observable diagnostic without echoing data.
+                message = (f'pattern: must match pattern "{e.validator_value}"'
+                           if e.validator == "pattern" else f"{e.validator}: {e.message}")
+                failures.append(issue("SCHEMA_INVALID", identifier, f"records/{i}{suffix}", message))
         return sort_issues(failures)
 
 
