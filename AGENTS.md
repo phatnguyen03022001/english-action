@@ -7,7 +7,7 @@
 - `phatnguyen03022001/english` — English learning platform / product specifications.
 - `phatnguyen03022001/english-content` — English learning content and data quality pipeline.
 
-**Current implementation (TASK 06):** public Python Engine, synthetic regression suite and Linux CI. Cross-repository Node parity, private consumer integration and migration are **NOT VERIFIED**. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies, secrets, triggers, permissions and CI results. This repo is not a data store, content publisher, learner app, private-CI proxy, deployment service or general-purpose CI farm.
+**Current implementation (TASK 07):** public Python Engine, V1/V2 schema generator, synthetic regression suite, Linux CI and a verified private english-content consumer pinned to Python for schema/candidate commands. Real publication remains disabled, and Node-dependent historical QA/rollback source is retained privately. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies, secrets, triggers, permissions and CI results. This repo is not a data store, content publisher, learner app, private-CI proxy, deployment service or general-purpose CI farm.
 
 Do not copy private source, private test fixtures, credentials, proprietary content, datasets, or learner data into this public repository, its logs, artifacts, caches, or issues.
 
@@ -56,7 +56,7 @@ tests/
 - Use lower_snake_case for `workflow_call` inputs/outputs; document their types, defaults, and required status in the workflow itself. Keep the interface minimal and avoid general-purpose free-form command execution.
 - Use lower-kebab-case for repository-owned files, directories, workflow names, and job IDs. Use descriptive human-readable workflow/job/step labels. Test names should follow the language and runner's idiom and state the behavior and condition.
 - `actions/<name>/action.yml` is allowed only for a **proven repeated set of steps** that needs a composite action, not as a replacement for reusable workflows.
-- **Current:** a public Python quality engine, synthetic regression suite and public CI exist; private consumer integration requires independent verification. **Approved future target:** Python-only Content Quality Engine and its genuinely shareable public/synthetic tests may also reside here *after separately authorized migration*. Never copy restricted producer tests/fixtures, data, confidential evidence, secrets or unapproved source. Avoid redundant governance or placeholder directories.
+- **Current:** the authorized private english-content consumer pins the verified public Python Engine for schema/candidate operations. Its Node.js/Ajv production-history tests and rollback code remain private until equivalent historical QA is preserved. Never copy restricted producer tests/fixtures, data, confidential evidence, secrets or unapproved source. Avoid redundant governance or placeholder directories.
 
 ## Repository and change policy
 
@@ -65,7 +65,7 @@ tests/
 - Check current repository and consumer requirements before a workflow change. Record intended caller, exact contract, security boundary, test evidence, cost/concurrency trade-offs, and rollback to the previously pinned SHA.
 - Do not add product features, release/deploy workflows, runtime services, containers, databases, new dependencies, or an automated private-repo sync without a separately approved real requirement.
 
-**Current versus target:** TASK 06 establishes initial public Python source, synthetic tests and CI without transferring private producer assets. These do not certify Node parity, private consumer wiring, content publication or cutover. Access to private secrets, consumer dispatch, migration and publication remain separately gated; TASK 07 requires parity and rollback evidence.
+**Current versus target:** TASK 07 has independently verified private Node/Python compatibility and immutable runtime pinning, then moved english-content schema/candidate entrypoints to Python. This does not authorize actual publication, access to private credentials, or deletion of Node-dependent historical QA until those responsibilities are preserved. The english learner-app consumer remains outside this TASK 07 cutover.
 
 ## Testing and CI design governance
 

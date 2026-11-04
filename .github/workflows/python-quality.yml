@@ -9,6 +9,9 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/python-quality.yml'
       - '.github/workflows/reusable-python-quality.yml'
+      - 'AGENTS.md'
+      - 'README.md'
+      - 'QUALITY_ENGINE.md'
   pull_request:
     paths:
       - 'english_action/**'
@@ -16,6 +19,9 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/python-quality.yml'
       - '.github/workflows/reusable-python-quality.yml'
+      - 'AGENTS.md'
+      - 'README.md'
+      - 'QUALITY_ENGINE.md'
 
 permissions:
   contents: read

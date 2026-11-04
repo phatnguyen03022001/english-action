@@ -1,17 +1,24 @@
-# Python Content Quality Engine (TASK 06)
+# Python Content Quality Engine — TASK 07
 
-Source: `english_action/`. Python 3.11+ and `jsonschema>=4.23,<5`. No Mac, MongoDB, private data, or network schema resolver required. Schemas are **supplied by the private caller** through `--schemas <root>` with `v1/` and `v2/` directories; this public repository does not ship private schemas, proprietary fixtures, editorial records or production data.
+Public implementation: `english_action/` (Python 3.11+, `jsonschema>=4.23,<5`). The private caller supplies V1/V2 JSON Schemas, registry, data and all authentic editorial evidence. GitHub-hosted CI does not require a Mac, MongoDB or external network schema resolver.
 
-Run the package and public synthetic tests:
+## Engine and commands
 
 ```sh
 python3 -m pip install .
 python3 -m unittest discover -s tests -v
-python3 -m english_action validate --schemas /path/to/private/schema-root --input /path/to/private/batch.json --state /path/to/private/.draft/candidates-state.json
+python3 -m english_action schemas-check --schemas /path/to/private/schemas
+python3 -m english_action validate --schemas /path/to/private/schemas --input /path/to/batch.json --state /path/to/private/.draft/state.json
 ```
 
-Operations: `validate`, `prepare`, `bind-evidence`, `revise`, `promote`, `check`. `--dry-run` never writes. Mutating operations acquire an exclusive state lock, reject symlink state paths, and atomically replace a private state file. Inputs and output JSON statuses retain the Node command vocabulary; **exact Node result parity is not certified**. `--full-publication-diagnostics` applies to `check`.
+Operations: `schemas-check`, `schemas-generate --version v1|v2`, `validate`, `prepare`, `bind-evidence`, `revise`, `promote` and `check`. Schema generation uses caller-owned V1/V2 registries and writes only on explicit `schemas-generate`; normal schema checks never write. Persistent state mutations use exclusive locks, private permissions, atomic replacement, replay/CAS/history and fail-closed input handling.
 
-**Safety boundary:** The CLI has no owner-attestation/rights verification callbacks. `promote` is therefore blocked even if supplied JSON claims approval. The engine also hard-blocks positive publication eligibility with `QUALITY_PARITY_NOT_VERIFIED` until real private consumer parity, graph/diagnostics completion and independent authority verification are finished. `schema valid` and `ledger prepared` do not authorize publication. Do not remove this guard as part of TASK 06.
+The Python implementation includes V1/V2 registry schemas, lexical and lifecycle graph validation, claim-specific evidence and rights checks, editorial eligibility, versioned draft operations, V1 representation migration and eight-axis Golden QA. Public tests use synthetic fixtures only. English-content executes its own private parity and historical QA tests in its private runner.
 
-**Known work for TASK 07 readiness:** Full semantic graph equivalence, V1/V2 diagnostic ordering/message parity, all JavaScript number edge-case digests, private consumer fixtures/behavior comparison, trusted caller integration, positive authorized publication flows, and consumer rollback have **not** been verified. JavaScript implementation in `english-content` is untouched. Keep it as the production authoritative implementation; do not use this Python build as a cutover or publication decision engine yet.
+## Two independent safety gates
+
+**Technical engine use:** English-content's nine npm schema/candidate command entrypoints were switched to an immutable public Engine SHA under TASK 07 after positive and negative CI, synthetic stress, private integration and rollback tests. Node implementations remain in the private repository as test oracles and rollback references until their separate historical-QA responsibilities can be removed safely. Never use the public workflow to process private source or pay for a private consumer run.
+
+**Real publication eligibility:** This CLI has no independently authenticated owner-appointment, evidence and rights provider. `promote` and positive publication eligibility are therefore deliberately blocked, even when isolated synthetic test callbacks establish a valid domain claim. The `QUALITY_PARITY_NOT_VERIFIED` guard is retained as a conservative production-publication lock, **not** as a claim that private technical test execution did not occur. Neither a passed schema check nor a technically migrated Engine authorizes actual content publication. Do not remove this guard without independent authority integration, a separately verified security boundary and Human Owner approval.
+
+Source code and private data have distinct owners: `english-action` publishes only reusable public-safe Python code and tests; `english-content` owns schemas, datasets, evidence, editorial policy, publication metadata and confidential fixtures.
