@@ -572,6 +572,89 @@ def graph_issues(records: list[dict], version: str = "v2") -> list[dict]:
     return sort_issues(errors)
 
 
+
+def lifecycle_v2_issues(records: list[dict]) -> list[dict]:
+    """Check V2 retirement and supersession integrity without trusting audit assertions."""
+    by_id = {record["_id"]: record for record in records}
+    incoming: dict[str, set[str]] = defaultdict(set)
+    fields = {
+        "rel": ("sourceId", "targetId"), "eqv": ("sourceSenseId", "targetSenseId"),
+        "con": ("senseId",), "col": ("anchorSenseId",),
+    }
+    for record in records:
+        kind = record["_id"].split("_", 1)[0]
+        for field in fields.get(kind, ()):
+            target = record.get(field)
+            if isinstance(target, str) and target.startswith("sns_"):
+                incoming[target].add(record["_id"])
+
+    issues = []
+    for decision in records:
+        identifier = decision["_id"]
+        if not identifier.startswith("dec_") or decision.get("decisionEffect") != "lifecycle_transition":
+            continue
+        audit = decision.get("transitionAudit") or {}
+        edges = audit.get("incomingEdges") or []
+        affected = {edge.get("edgeId") for edge in edges}
+        for predecessor in decision.get("previousSenseIds") or []:
+            old = by_id.get(predecessor)
+            if not old or old.get("lifecycleStatus") != "retired" or old.get("retiredByDecisionId") != identifier:
+                issues.append(issue("LIFECYCLE_SOURCE_NOT_RETIRED", identifier, "previousSenseIds",
+                                    "Consumed transition requires a retired predecessor tied to this decision"))
+            for edge_id in sorted(incoming.get(predecessor, ())):
+                if edge_id not in affected:
+                    issues.append(issue("LIFECYCLE_INCOMING_EDGE_UNRESOLVED", identifier,
+                                        "transitionAudit/incomingEdges",
+                                        "Incoming edge " + edge_id + " has no explicit adjudication"))
+        seen_edges = set()
+        for edge in edges:
+            edge_id = edge.get("edgeId")
+            if edge_id in seen_edges:
+                issues.append(issue("LIFECYCLE_EDGE_DUPLICATE", identifier,
+                                    "transitionAudit/incomingEdges", "Same edge has multiple resolutions"))
+            seen_edges.add(edge_id)
+            if edge.get("decisionId") != identifier:
+                issues.append(issue("LIFECYCLE_EDGE_DECISION_MISMATCH", identifier,
+                                    "transitionAudit/incomingEdges", "Incoming edge references another decision"))
+            if edge.get("resolution") == "reattached" and not edge.get("targetId"):
+                issues.append(issue("LIFECYCLE_EDGE_TARGET_MISSING", identifier,
+                                    "transitionAudit/incomingEdges", "Reattached edge requires explicit target"))
+            if edge_id not in by_id:
+                issues.append(issue("LIFECYCLE_EDGE_HISTORY_MISSING", identifier,
+                                    "transitionAudit/incomingEdges",
+                                    "Recorded edge is absent from current snapshot; historical proof is required"))
+
+    # Iterative functional-graph traversal: O(records + supersession edges), no recursion.
+    decisions = [r for r in records if r["_id"].startswith("dec_") and r.get("supersedesDecisionId")]
+    visit_state: dict[str, int] = {}
+    reaches_cycle: dict[str, bool] = {}
+    for start in decisions:
+        if visit_state.get(start["_id"]) == 2:
+            continue
+        path = []
+        current = start
+        cycle = False
+        while current and current.get("supersedesDecisionId"):
+            key = current["_id"]
+            status = visit_state.get(key)
+            if status == 2:
+                cycle = reaches_cycle.get(key) is True
+                break
+            if status == 1:
+                cycle = True
+                break
+            visit_state[key] = 1
+            path.append(key)
+            current = by_id.get(current["supersedesDecisionId"])
+        for key in path:
+            visit_state[key] = 2
+            reaches_cycle[key] = cycle
+    for start in decisions:
+        if reaches_cycle.get(start["_id"]):
+            issues.append(issue("DECISION_SUPERSESSION_CYCLE", start["_id"],
+                                "supersedesDecisionId", "Decision supersession cycle"))
+    return sort_issues(issues)
+
 def _parse_time(s: str | None) -> datetime | None:
     if not isinstance(s, str) or not s:
         return None
@@ -775,7 +858,7 @@ def validate_dataset(records_or_dataset: Any, schemas: SchemaDirectory, *, versi
         return {"valid": False, "stage": "schema", "issues": errors, "publication": {"eligible": False, "issues": []}}
     if version == "v1":
         return validate_v1_graph(records, schemas.vocabularies, publication=publication)
-    graph = graph_issues(records, version)
+    graph = sort_issues(graph_issues(records, version) + lifecycle_v2_issues(records))
     publication_result = evaluate_publication(records, limit=publication_issue_limit)
     issues = sort_issues(graph + (publication_result["issues"] if publication else []))
     return {"valid": not issues and (not publication or publication_result["eligible"]), "stage": "graph", "issues": issues, "publication": publication_result}
