@@ -22,8 +22,8 @@ class LifecycleV2Tests(unittest.TestCase):
                     "previousSenseIds": [previous["_id"]],
                     "transitionAudit": {"incomingEdges": []}}
         codes = [i["code"] for i in lifecycle_v2_issues([previous, edge, decision])]
-        self.assertEqual(codes, ["LIFECYCLE_INCOMING_EDGE_UNRESOLVED",
-                                 "LIFECYCLE_SOURCE_NOT_RETIRED"])
+        self.assertEqual(codes, ["LIFECYCLE_SOURCE_NOT_RETIRED",
+                                 "LIFECYCLE_INCOMING_EDGE_UNRESOLVED"])
 
     def test_duplicate_foreign_missing_and_targetless_adjudications(self):
         edge_id = ident("rel", 9)
