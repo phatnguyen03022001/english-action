@@ -331,10 +331,10 @@ def promote_candidates(state: dict, request: dict, schemas: SchemaDirectory, *, 
         before.append(deepcopy(old)); after.append(deepcopy(new))
     validated = validate_dataset(next_state["records"], schemas)
     if not validated["valid"]:
-        return _result(state, "blocked", "PROMOTION_INVALID_DATASET", "Candidate invalid")
+        return state, {"status": "blocked", "issues": validated["issues"], "publicationEligible": False}
     assessment = evaluate_publication(next_state["records"], (trust or {}) | {"subject_ids": list(seen)})
     if not assessment["eligible"]:
-        return _result(state, "blocked", "PUBLICATION_GATE_FAILED", "Independent proof missing", details=assessment["issues"])
+        return state, {"status": "blocked", "issues": assessment["issues"], "publicationEligible": False}
     if dry_run:
         return _result(state, "dry-run", publicationEligible=True, promotionId=request["promotionId"], subjectIds=list(seen))
     next_state.setdefault("promotions", {})[request["promotionId"]] = {"digest": hash_value, "subjectIds": list(seen)}

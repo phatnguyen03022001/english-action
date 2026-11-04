@@ -157,6 +157,8 @@ class CutoverSafetyTests(unittest.TestCase):
             {"canonicalId": subject["_id"], "expectedRevision": 1}]}
         unchanged, result = promote_candidates(state, requested, self.schemas, trust=trust)
         self.assertEqual(result["status"], "blocked")
+        self.assertIn("CLAIM_PATH_UNVERIFIED", [i["code"] for i in result["issues"]])
+        self.assertNotIn("PUBLICATION_GATE_FAILED", [i["code"] for i in result["issues"]])
         self.assertEqual(unchanged, state)
 
     def test_synthetic_revocation_scope_and_unavailable_attestations_are_denied(self):
