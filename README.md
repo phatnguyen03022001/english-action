@@ -20,3 +20,25 @@ The private english-content consumer now invokes a pinned Python Engine for sche
 - **Safety:** public or synthetic fixture data only; never expose private evidence, proprietary content, customer/learner data, credentials or confidential tests in public code, logs, caches, artifacts or issues. Content-quality PASS does not approve editorial claims, distribution rights, learner scoring or release.
 - **Identity and policy:** preserve lexical prefixed UUIDv7 with revision CAS/history, consumer prefixed UUIDv4 as a different namespace, versioned dependency-closed and fail-closed use eligibility, correction and withdrawal. Follow INV-01–INV-06, including P0 runtime AI Assessment OFF.
 - **Execution/storage:** GitHub-first Mac-independent work, hosted GitHub Actions CI in the private caller and no mandatory Factory MongoDB. Initial Google Drive media storage with migration capability is an unimplemented target, **not a commercial media/voice license**. No autonomous AI worker is implied by a CI runner.
+
+
+## TASK 08 — Foundation P0-a Spawn Engine (draft-only)
+
+`english_action.spawn` implements a bounded asynchronous Seed → Worker → Generate → Merge → Private Contract → Python Quality Engine → DRAFT/HOLD pipeline. It covers exactly N1-01, N2-06, N3-11, K1-16, K1-17, K2-21 and N2-10. Worker fanout is 1–16, per-attempt timeout is 0–120 seconds, retry count 0–3, and each batch contains at most 100 seeds. Persistent private JSON drafts use the existing atomic state-file locking mechanism, stable candidate identity, CAS revision checks, replay safety and before/after history. Conflicting or invalid outputs are rejected and never eligible for publication.
+
+The public module exposes the async `Worker` protocol plus an explicit synthetic fixture worker and opt-in OpenAI Chat Completions adapter. The adapter is **not verified against a live provider** by synthetic CI. Real invocation requires a configured compatible model, `OPENAI_API_KEY`, and explicit `--provider openai --allow-real-ai`; requests are bounded by timeout and completion-token limit. GitHub Actions neither supplies nor authorizes AI credentials automatically. No real provider is used by default.
+
+The private consumer supplies the versioned producer JSON Schema, lexical schemas, lexical candidate fixture, source references and media. Example:
+
+```sh
+python -m english_action.spawn \
+  --input data/spawn/seeds/foundation-p0a-synthetic.json \
+  --contract schemas/spawn/foundation-p0a.schema.json \
+  --schemas schemas \
+  --quality-input data/candidates/pilot-fanout-001.json \
+  --media-root /private/test-fixtures \
+  --state /private/drafts/state.json \
+  --provider synthetic --concurrency 3 --timeout 15 --retries 1
+```
+
+Private CI runs this against a full-SHA-pinned public engine, verifies synthetic WAV fixture hashes, tests all seven positive and negative producer shapes, checks replay, and uploads a versioned **private, 7-day-retained synthetic draft artifact**. This is test storage, not an approved durable production draft database or Google Drive upload. Real audio pronunciation, media storage integration, independent linguistic evidence, rights and owner-appointed editorial review are **NOT VERIFIED**; every candidate remains HOLD and public release stays disabled. The producer never scores learners or calls the english app.
