@@ -113,14 +113,15 @@ class EngineTest(unittest.TestCase):
         rel_a = item("rel", 4, relationType="SYNONYM_OF", sourceId=sense_a["_id"],
                      targetId=sense_b["_id"], qualifiers={"context": "café"})
         rel_b = item("rel", 5, relationType="SYNONYM_OF", sourceId=sense_a["_id"],
-                     targetId=sense_b["_id"], qualifiers={"context": "cafe\\u0301"})
+                     targetId=sense_b["_id"], qualifiers={"context": "cafe\u0301"})
         result = validate_dataset([entry, sense_a, sense_b, rel_a, rel_b], schemas, version="v1")
         self.assertEqual([x["code"] for x in result["issues"]], ["DUPLICATE_SEMANTIC_EDGE"])
         verified = dict(entry, editorialStatus="verified")
         pub = validate_dataset([verified], schemas, version="v1", publication=True)
         self.assertFalse(pub["valid"])
         self.assertEqual([x["code"] for x in pub["issues"]],
-                         [x["code"] for x in pub["publication"]["issues"]])
+                         ["INSUFFICIENT_EVIDENCE", "PUBLICATION_REVIEW_MISSING",
+                          "PUBLICATION_EVIDENCE_MISSING"])
         self.assertEqual(len(pub["publication"]["issues"]), 3)
         self.assertFalse(pub["publication"]["eligible"])
 
