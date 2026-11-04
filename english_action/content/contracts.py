@@ -6,6 +6,7 @@ consumer; no source of authority is bundled with this public Python library.
 from __future__ import annotations
 
 from collections import defaultdict
+from heapq import heappush, heapreplace
 from datetime import datetime
 from hashlib import sha256
 import json
@@ -91,6 +92,45 @@ def issue(code: str, entity_id: str = "", path: str = "", message: str = "") -> 
 
 def sort_issues(issues: list[dict]) -> list[dict]:
     return sorted(issues, key=lambda i: (i.get("entityId", ""), i.get("path", ""), i["code"], i.get("message", "")))
+
+
+class _WorstIssueFirst:
+    """Heap entry comparing in reverse, so the largest retained issue is first."""
+    __slots__ = ("key", "record")
+
+    def __init__(self, record: dict):
+        self.record = record
+        self.key = (record.get("entityId", ""), record.get("path", ""),
+                    record["code"], record.get("message", ""))
+
+    def __lt__(self, other: "_WorstIssueFirst") -> bool:
+        return self.key > other.key
+
+
+class _BoundedPublicationIssues:
+    """Exact diagnostic count with a bounded, deterministically ordered API result."""
+    __slots__ = ("limit", "count", "_retained")
+
+    def __init__(self, limit: int | None):
+        self.limit = limit
+        self.count = 0
+        self._retained: list = []
+
+    def append(self, record: dict) -> None:
+        self.count += 1
+        if self.limit is None:
+            self._retained.append(record)
+        elif self.limit:
+            item = _WorstIssueFirst(record)
+            if len(self._retained) < self.limit:
+                heappush(self._retained, item)
+            elif item.key < self._retained[0].key:
+                heapreplace(self._retained, item)
+
+    def result(self) -> list[dict]:
+        if self.limit is None:
+            return sort_issues(self._retained)
+        return sort_issues([item.record for item in self._retained])
 
 
 def value_at(record: Any, path: str) -> Any:
@@ -760,8 +800,13 @@ def evaluate_publication(records: list[dict], options: Mapping[str, Any] | None 
     # Node publication counts the V1 registry graph, not the V2-only storage extras.
     # External authority remains independently fail-closed.
     vocabulary = opts.get("v1_vocabulary")
-    problems: list[dict] = (validate_v1_graph(records, vocabulary)["issues"]
-                            if isinstance(vocabulary, dict) else graph_issues(records))
+    graph_problems = (validate_v1_graph(records, vocabulary)["issues"]
+                      if isinstance(vocabulary, dict) else graph_issues(records))
+    problems = _BoundedPublicationIssues(limit)
+    for graph_problem in graph_problems:
+        problems.append(graph_problem)
+    del graph_problems
+
     def add(code, identifier="", path="", msg=""):
         problems.append(issue(code, identifier, path, msg))
     publishable = lambda r: r["_id"].split("_", 1)[0] not in {"src", "evd", "rev", "dec"}
@@ -909,9 +954,9 @@ def evaluate_publication(records: list[dict], options: Mapping[str, Any] | None 
     # TASK 06 is not private-consumer parity certified. No public Engine
     # caller may turn local quality checks into permission to publish.
     add("QUALITY_PARITY_NOT_VERIFIED", "", "publication", "Private consumer parity and external authority boundary not yet certified")
-    problems = sort_issues(problems)
-    count = len(problems)
-    return {"eligible": count == 0, "issues": problems if limit is None else problems[:limit], "issueCount": count, "omittedIssueCount": max(0, count - (count if limit is None else min(limit, count)))}
+    count = problems.count
+    return {"eligible": count == 0, "issues": problems.result(),
+            "issueCount": count, "omittedIssueCount": max(0, count - (count if limit is None else min(limit, count)))}
 
 
 def validate_dataset(records_or_dataset: Any, schemas: SchemaDirectory, *, version: str = "v2", publication: bool = False, publication_issue_limit: int | None = 1000) -> dict:
