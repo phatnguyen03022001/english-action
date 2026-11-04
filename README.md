@@ -42,3 +42,27 @@ python -m english_action.spawn \
 ```
 
 Private CI runs this against a full-SHA-pinned public engine, verifies synthetic WAV fixture hashes, tests all seven positive and negative producer shapes, checks replay, and uploads a versioned **private, 7-day-retained synthetic draft artifact**. This is test storage, not an approved durable production draft database or Google Drive upload. Real audio pronunciation, media storage integration, independent linguistic evidence, rights and owner-appointed editorial review are **NOT VERIFIED**; every candidate remains HOLD and public release stays disabled. The producer never scores learners or calls the english app.
+
+## TASK 34 — Gate 2 feature specification validator
+
+The public, standard-library validator checks deterministic Spec Kit 1.2.3 project-local structure for caller-owned feature specifications. It reads `specs/NNN-feature-name/spec.md` and the caller's `docs/product/capabilities.md`, checks required metadata/sections, stories and Given/When/Then cases, numbered FR/NFR/SC IDs, trace references, capabilities, relative Markdown paths/heading anchors, and explicit approval-provenance formatting. It never writes to the caller repository. A structural PASS is **not** semantic quality, approval authenticity, release readiness, privacy compliance or learning-evidence validity.
+
+Run locally with the existing package installation:
+
+```sh
+python -m english_action.spec_validate --root /path/to/english
+```
+
+For **TASK 35**, the private `english` repository must separately add its own caller workflow and pin the reusable workflow to the full verified TASK 34 commit SHA. Pass that **same SHA** as the required `validator_sha` input. Example caller job (replace both placeholders with the identical, full immutable SHA):
+
+```yaml
+jobs:
+  gate-2-spec:
+    permissions:
+      contents: read
+    uses: phatnguyen03022001/english-action/.github/workflows/reusable-spec-validation.yml@<TASK_34_COMMIT_SHA>
+    with:
+      validator_sha: <TASK_34_COMMIT_SHA>
+```
+
+The reusable workflow checks out the calling repository's triggering `github.sha`, checks out the public validator at `validator_sha`, verifies both SHAs and runs validation in the **private caller's** GitHub Actions run. No secrets inheritance, PAT, artifact upload or private-source proxy in the public repository. Public CI runs only synthetic fixtures; private integration is **NOT VERIFIED** until TASK 35. Roll back by reverting the caller's workflow pin to its prior accepted revision or disabling that new caller job; the public repository cannot silently alter a pinned consumer.

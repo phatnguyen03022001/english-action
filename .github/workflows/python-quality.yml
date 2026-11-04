@@ -9,6 +9,7 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/python-quality.yml'
       - '.github/workflows/reusable-python-quality.yml'
+      - '.github/workflows/reusable-spec-validation.yml'
       - 'AGENTS.md'
       - 'README.md'
       - 'QUALITY_ENGINE.md'
@@ -19,6 +20,7 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/python-quality.yml'
       - '.github/workflows/reusable-python-quality.yml'
+      - '.github/workflows/reusable-spec-validation.yml'
       - 'AGENTS.md'
       - 'README.md'
       - 'QUALITY_ENGINE.md'
@@ -47,3 +49,5 @@ jobs:
         run: |
           python -m coverage run --branch --source=english_action -m unittest discover -s tests -v
           python -m coverage report -m
+      - name: Run public synthetic specification validator smoke
+        run: python -m english_action.spec_validate --root tests/fixtures/spec-validation
