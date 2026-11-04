@@ -123,6 +123,7 @@ class SchemaDirectory:
         if not folder.is_dir():
             raise ValueError(f"Schema directory not found: {version}")
         self.v1_vocabulary = json.loads((root_path / "v1" / "vocabularies.json").read_text(encoding="utf-8"))
+        self.version = version
         self.vocabularies = self.v1_vocabulary if version == "v1" else {}
         self.schemas: dict[str, dict] = {}
         resources = []
@@ -151,7 +152,10 @@ class SchemaDirectory:
             identifier = identifier if isinstance(identifier, str) else ""
             validator = self.validators.get(identifier.split("_", 1)[0])
             if validator is None:
-                failures.append(issue("SCHEMA_INVALID", identifier, f"records/{i}/_id", "Unknown entity type"))
+                prefix = identifier.split("_", 1)[0]
+                message = ("No active V1 entity schema for prefix " + prefix
+                           if self.version == "v1" else "Unknown entity type")
+                failures.append(issue("SCHEMA_INVALID", identifier, f"records/{i}/_id", message))
                 continue
             try:
                 errors = list(validator.iter_errors(record))
@@ -159,18 +163,36 @@ class SchemaDirectory:
                 # An unresolvable $ref or bad external schema must never become PASS.
                 failures.append(issue("SCHEMA_INVALID", identifier, f"records/{i}", "Schema resolution failed: " + type(exc).__name__))
                 continue
-            for e in errors:
-                pointer = "/".join(str(p) for p in e.absolute_path)
+            def append_error(error):
+                # Ajv allErrors expands failed oneOf/anyOf branches; jsonschema
+                # nests their errors in context. Retain the same diagnostic fan-out.
+                if error.validator in ("oneOf", "anyOf"):
+                    for child in error.context:
+                        append_error(child)
+                pointer = "/".join(str(part) for part in error.absolute_path)
                 suffix = "/" + pointer if pointer else "/"
-                if e.validator == "required":
-                    m = re.search(r"'([^']+)' is a required property", e.message)
+                if error.validator == "required":
+                    m = re.search(r"'([^']+)' is a required property", error.message)
                     if m:
                         suffix += m.group(1)
-                # jsonschema and Ajv describe regex failures differently; preserve
-                # the Node CLI's exact observable diagnostic without echoing data.
-                message = (f'pattern: must match pattern "{e.validator_value}"'
-                           if e.validator == "pattern" else f"{e.validator}: {e.message}")
-                failures.append(issue("SCHEMA_INVALID", identifier, f"records/{i}{suffix}", message))
+                messages = {
+                    "oneOf": "must match exactly one schema in oneOf",
+                    "anyOf": "must match a schema in anyOf",
+                    "not": "must NOT be valid",
+                    "const": "must be equal to constant",
+                    "enum": "must be equal to one of the allowed values",
+                    "additionalProperties": "must NOT have additional properties",
+                }
+                if error.validator == "pattern":
+                    detail = f'must match pattern "{error.validator_value}"'
+                elif error.validator == "required":
+                    detail = "must have required property " + repr(m.group(1)) if m else error.message
+                else:
+                    detail = messages.get(error.validator, error.message)
+                failures.append(issue("SCHEMA_INVALID", identifier,
+                                      f"records/{i}{suffix}", f"{error.validator}: {detail}"))
+            for e in errors:
+                append_error(e)
         return sort_issues(failures)
 
 
