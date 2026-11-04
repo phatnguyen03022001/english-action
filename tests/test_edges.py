@@ -68,7 +68,7 @@ class EdgeTests(unittest.TestCase):
         issues = validate_dataset([a, b], self.schemas)["issues"]
         self.assertIn("CYCLE_DETECTED", [x["code"] for x in issues])
         left = lex(); right = lex("other", idx="000000000003")
-        rel = {"_id": "rel_01940000-0000-7000-8000-000000000004", "schemaVersion": "2.0.0", "lifecycleStatus": "active", "editorialStatus": "draft", "sourceId": left["_id"], "targetId": right["_id"], "relationType": "SYNONYM_OF"}
+        rel = {"_id": "rel_01940000-0000-7000-8000-000000000004", "schemaVersion": "2.0.0", "lifecycleStatus": "active", "editorialStatus": "draft", "sourceId": left["_id"], "targetId": right["_id"], "relationType": "DERIVED_FROM"}
         duplicate = deepcopy(rel); duplicate["_id"] = duplicate["_id"][:-1] + "5"
         self.assertIn("DUPLICATE_SEMANTIC_EDGE", [x["code"] for x in validate_dataset([left, right, rel, duplicate], self.schemas)["issues"]])
 
