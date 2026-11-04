@@ -37,6 +37,22 @@ def synth_schemas(root: Path):
                                      "lemma": {"type": "string"}, "language": {"type": "string"},
                                      "pos": {"enum": ["NOUN", "VERB"]}, "entryKind": {"type": "string"}}}
             (folder / f"{name}.schema.json").write_text(json.dumps(schema), encoding="utf-8")
+        if version == "v1":
+            # Public synthetic vocabulary: only metadata needed by isolated tests.
+            vocabulary = {
+                "identifiers": {"activeV1Prefixes": list(PREFIXES)},
+                "relationTypes": [
+                    {"type": "DERIVED_FROM", "sourceType": "LexicalEntry",
+                     "targetType": "LexicalEntry", "symmetric": False, "cyclePolicy": "reject"},
+                    {"type": "HYPERNYM_OF", "sourceType": "LexicalSense",
+                     "targetType": "LexicalSense", "symmetric": False, "cyclePolicy": "reject"},
+                    {"type": "SYNONYM_OF", "sourceType": "LexicalSense",
+                     "targetType": "LexicalSense", "symmetric": True, "cyclePolicy": "allow"},
+                ],
+                "relationModel": {"qualifierFieldsInOrder": ["context", "register"]},
+                "retirementRequirements": {"semantic_merge": {"retiredSourceMin": 2}},
+            }
+            (folder / "vocabularies.json").write_text(json.dumps(vocabulary), encoding="utf-8")
 
 
 def lex(lemma="tiếng", *, idx="000000000001", **additional):
@@ -57,6 +73,56 @@ class EngineTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         synth_schemas(self.root)
         self.schemas = SchemaDirectory(self.root)
+
+    def test_v1_wrong_type_and_cycle_regressions(self):
+        schemas = SchemaDirectory(self.root, "v1")
+        def entity(prefix, n, **fields):
+            return {"_id": f"{prefix}_01940000-0000-7000-8000-{n:012x}",
+                    "schemaVersion": "1.0.0", "lifecycleStatus": "active",
+                    "editorialStatus": "draft", **fields}
+        first, second = entity("top", 1), entity("top", 2)
+        first["parentTopicId"] = second["_id"]
+        second["parentTopicId"] = first["_id"]
+        cycles = validate_dataset([first, second], schemas, version="v1")["issues"]
+        self.assertEqual([x["code"] for x in cycles], ["CYCLE_DETECTED"])
+        self.assertEqual(cycles[0]["path"], "TOPIC_PARENT")
+        first["parentTopicId"] = first["_id"]
+        second.pop("parentTopicId")
+        self.assertEqual(len([x for x in validate_dataset([first, second], schemas, version="v1")["issues"]
+                              if x["code"] == "CYCLE_DETECTED"]), 1)
+        sense = entity("sns", 3, entryId=first["_id"])
+        mismatch = validate_dataset([first, second, sense], schemas, version="v1")["issues"]
+        self.assertTrue(any(x["code"] == "REFERENCE_TYPE_MISMATCH" and
+                            x["message"] == "Expected lex, found top" for x in mismatch))
+        entry_a = entity("lex", 4, language="en", lemma="alpha", pos="NOUN", entryKind="word")
+        entry_b = entity("lex", 5, language="en", lemma="beta", pos="NOUN", entryKind="word")
+        rel_a = entity("rel", 6, sourceId=entry_a["_id"], targetId=entry_b["_id"], relationType="DERIVED_FROM")
+        rel_b = entity("rel", 7, sourceId=entry_b["_id"], targetId=entry_a["_id"], relationType="DERIVED_FROM")
+        self.assertEqual(len([x for x in validate_dataset([entry_a, entry_b, rel_a, rel_b], schemas, version="v1")["issues"]
+                              if x["code"] == "CYCLE_DETECTED"]), 1)
+
+    def test_v1_unicode_qualifiers_and_publication_diagnostics(self):
+        schemas = SchemaDirectory(self.root, "v1")
+        def item(prefix, n, **fields):
+            return {"_id": f"{prefix}_01940000-0000-7000-8000-{n:012x}",
+                    "schemaVersion": "1.0.0", "lifecycleStatus": "active",
+                    "editorialStatus": "draft", **fields}
+        entry = item("lex", 1, language="en", lemma="synthetic", pos="NOUN", entryKind="word")
+        sense_a = item("sns", 2, entryId=entry["_id"])
+        sense_b = item("sns", 3, entryId=entry["_id"])
+        rel_a = item("rel", 4, relationType="SYNONYM_OF", sourceId=sense_a["_id"],
+                     targetId=sense_b["_id"], qualifiers={"context": "café"})
+        rel_b = item("rel", 5, relationType="SYNONYM_OF", sourceId=sense_a["_id"],
+                     targetId=sense_b["_id"], qualifiers={"context": "cafe\\u0301"})
+        result = validate_dataset([entry, sense_a, sense_b, rel_a, rel_b], schemas, version="v1")
+        self.assertEqual([x["code"] for x in result["issues"]], ["DUPLICATE_SEMANTIC_EDGE"])
+        verified = dict(entry, editorialStatus="verified")
+        pub = validate_dataset([verified], schemas, version="v1", publication=True)
+        self.assertFalse(pub["valid"])
+        self.assertEqual([x["code"] for x in pub["issues"]],
+                         [x["code"] for x in pub["publication"]["issues"]])
+        self.assertEqual(len(pub["publication"]["issues"]), 3)
+        self.assertFalse(pub["publication"]["eligible"])
 
     def test_nullable_topic_parent_is_not_a_reference(self):
         from english_action.contracts import graph_issues
