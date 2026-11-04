@@ -118,10 +118,12 @@ class SchemaDirectory:
     def __init__(self, root: str | Path, version: str = "v2") -> None:
         if version not in ("v1", "v2"):
             raise ValueError("Unsupported schema version")
-        folder = Path(root).resolve(strict=True) / version
+        root_path = Path(root).resolve(strict=True)
+        folder = root_path / version
         if not folder.is_dir():
             raise ValueError(f"Schema directory not found: {version}")
-        self.vocabularies = json.loads((folder / "vocabularies.json").read_text(encoding="utf-8")) if version == "v1" else {}
+        self.v1_vocabulary = json.loads((root_path / "v1" / "vocabularies.json").read_text(encoding="utf-8"))
+        self.vocabularies = self.v1_vocabulary if version == "v1" else {}
         self.schemas: dict[str, dict] = {}
         resources = []
         for path in sorted(folder.glob("*.schema.json")):
@@ -858,7 +860,8 @@ def validate_dataset(records_or_dataset: Any, schemas: SchemaDirectory, *, versi
         return {"valid": False, "stage": "schema", "issues": errors, "publication": {"eligible": False, "issues": []}}
     if version == "v1":
         return validate_v1_graph(records, schemas.vocabularies, publication=publication)
-    graph = sort_issues(graph_issues(records, version) + lifecycle_v2_issues(records))
+    from .v2_validation import validate_v2_graph
+    graph = validate_v2_graph(records, schemas.v1_vocabulary)
     publication_result = evaluate_publication(records, limit=publication_issue_limit)
     issues = sort_issues(graph + (publication_result["issues"] if publication else []))
     return {"valid": not issues and (not publication or publication_result["eligible"]), "stage": "graph", "issues": issues, "publication": publication_result}
