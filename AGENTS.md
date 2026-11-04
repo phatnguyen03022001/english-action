@@ -60,10 +60,35 @@ tests/
 
 ## Repository and change policy
 
-- `main` only; one integration writer. Preserve Git history and unrelated changes. Never force-push or change repository visibility, branch protections, secrets, or Actions settings as a side effect.
+- `main` only; **two independent scoped workers plus one shared Integration Writer**, under the ownership and publication contract below. Preserve Git history and unrelated changes. Never force-push or change repository visibility, branch protections, secrets, or Actions settings as a side effect.
 - Follow the workspace `/Users/tienphat/Developer/AGENTS.md` and canonical SDLC Mini when working locally.
 - Check current repository and consumer requirements before a workflow change. Record intended caller, exact contract, security boundary, test evidence, cost/concurrency trade-offs, and rollback to the previously pinned SHA.
 - Do not add product features, release/deploy workflows, runtime services, containers, databases, new dependencies, or an automated private-repo sync without a separately approved real requirement.
+
+## Concurrent workers: strict ownership and publication
+
+This repository remains **MAIN_ONLY**; no branch, PR, worktree, lock service, orchestration framework or new CI mechanism is required. Exactly two workers may write independently to `main` **only within their exclusive path scopes**. The Integration Writer is the sole owner of shared and otherwise unassigned paths, not a substitute owner for either worker's assigned scope.
+
+| Writer | Exclusive authorized paths |
+| --- | --- |
+| **Worker A — English** | `english_action/english/**`, `tests/english/**` |
+| **Worker B — English Content** | `english_action/content/**`, `tests/english-content/**` |
+| **Integration Writer — shared** | All other paths, including every shared file listed below |
+
+The worker scopes are disjoint. Shared/unassigned paths include **all** root `english_action/*.py` legacy compatibility wrappers, root `tests/test_*.py` global tests, `tests/fixtures/**`, `.github/workflows/**`, `pyproject.toml`, `AGENTS.md`, `README.md`, `QUALITY_ENGINE.md`, `.agents/**`, `third_party/**` and any other path not explicitly assigned to Worker A or B. New paths do not become worker-owned merely because a worker needs them; ownership follows the exact table. Do not move tests, duplicate shared logic or create abstractions to circumvent this boundary. Existing root tests, wrappers, public CLI/API compatibility and reusable workflows must continue to function.
+
+**Worker A/B mandatory write protocol** (applies to every unpublished commit, including retries):
+
+1. **Start from verified remote truth.** Fetch `origin main`, record its exact full commit SHA and inspect local worktree/index and unpublished commits. Preserve unrelated or pre-existing local work; never reset or discard it to make a push convenient. If worktree ownership cannot be established, stop.
+2. **Edit and stage only authorized paths.** Never edit, stage or commit shared/unassigned paths, even to finish an otherwise authorized task. Stage **specific intended files**, not `git add .`, `git add -A` or other blanket staging. Inspect working diff, staged file names and staged diff; verify *all* files in every unpublished commit being pushed, not just the last commit. Any out-of-scope path means **STOP**.
+3. **Verify behavior.** Run the focused relevant checks and existing compatibility tests affected by the change. Root/global tests may be executed but must not be modified by either worker. Record exact test commands, result and skipped/unavailable checks. Do not infer consumer compatibility solely from public CI.
+4. **Reconcile immediately before publication.** Fetch and compare the **exact remote `main` HEAD** with the local base and pending commits. When remote is ahead, inspect remote changed paths and dependencies. If safely disjoint and verified, fast-forward the local base when no local commits exist, or rebase **only unpublished local commits** onto updated `origin/main`. Preserve all remote commits and local changes. If edits overlap, shared paths require unapproved changes, conflicts occur, the ancestry is unclear or correctness cannot be reverified, **STOP**; do not silently choose a side.
+5. **Revalidate after any reconciliation.** Repeat full pending-commit path/contents review, diff and applicable tests against the new HEAD. Push `main` **non-force and fast-forward only**. No `--force`, `--force-with-lease` or history overwrite.
+6. **Handle a push race fail-closed.** A non-fast-forward rejection is not permission to overwrite: fetch, compare, reconcile, revalidate and retry at most **two** times. Stop if the retry limit is reached or any check fails. Never assume two pushes to one branch can proceed without synchronization.
+
+**Shared change handoff.** If a worker needs a reusable workflow, root wrapper, global test harness/fixture, package configuration, shared public API or any other shared file changed, it must **request** the Integration Writer with (a) exact path(s), (b) why, (c) consumer/API/CLI compatibility impact and (d) required tests. The worker must not perform the shared edit or create a duplicate workaround. The Integration Writer checks both consumers' pinned contracts and existing compatibility, owns the shared change, coordinates to avoid concurrent shared-file edits and publishes with the same remote-HEAD reconciliation, non-force fast-forward and fail-closed rules. Worker-owned paths remain with their respective workers.
+
+**Enforcement boundary.** The above is mandatory **agent/workflow policy**, verified by scoped staging, commit-path audit, tests, remote-HEAD comparison and guarded publication. GitHub direct pushes to one branch **do not provide folder-level authorization** by themselves. Until separately authorized technical controls exist, these are **not server-enforced per-path permissions**; do not claim that an out-of-scope direct push is technically impossible. Do not add branch protection, rulesets, bots or GitHub Apps as part of this policy.
 
 **Current versus target:** TASK 07 has independently verified private Node/Python compatibility and immutable runtime pinning, then moved english-content schema/candidate entrypoints to Python. This does not authorize actual publication, access to private credentials, or deletion of Node-dependent historical QA until those responsibilities are preserved. The english learner-app consumer remains outside this TASK 07 cutover.
 
