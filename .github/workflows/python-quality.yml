@@ -8,12 +8,14 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - '.github/workflows/python-quality.yml'
+      - '.github/workflows/reusable-python-quality.yml'
   pull_request:
     paths:
       - 'english_action/**'
       - 'tests/**'
       - 'pyproject.toml'
       - '.github/workflows/python-quality.yml'
+      - '.github/workflows/reusable-python-quality.yml'
 
 permissions:
   contents: read
