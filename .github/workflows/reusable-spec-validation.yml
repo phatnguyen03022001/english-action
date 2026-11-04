@@ -43,4 +43,4 @@ jobs:
           test "$(git -C .spec-validator-src rev-parse HEAD)" = "$VALIDATOR_SHA"
           python -m pip install --disable-pip-version-check --no-input ./.spec-validator-src
       - name: Validate caller repository without changing files
-        run: python -m english_action.spec_validate --root "$GITHUB_WORKSPACE"
+        run: python -m english_action.english.spec_validate --root "$GITHUB_WORKSPACE"

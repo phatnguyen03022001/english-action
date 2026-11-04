@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from copy import deepcopy
 from hashlib import sha256
 import json
 import os
@@ -16,7 +17,7 @@ from urllib.request import Request, urlopen
 from jsonschema import Draft202012Validator
 
 from .cli import _atomic_save, _path_safe, _read_state, _state_lock
-from .contracts import SchemaDirectory, digest
+from .contracts import SchemaDirectory
 from .ledger import blank_state, prepare_batch
 
 RECIPES = ("N1-01", "N2-06", "N3-11", "K1-16", "K1-17", "K2-21", "N2-10")
@@ -32,6 +33,8 @@ REQUIRED = {
     "K2-21": ("passage", "question", "mainIdea", "alternatives", "answerKey"),
     "N2-10": ("context", "tokens", "acceptedOrderings", "constraints", "explanation"),
 }
+ASSET_FIELDS = frozenset(("logicalId", "provider", "model", "mediaType", "storage",
+                          "revision", "sha256", "rightsStatus", "accessibility", "locator"))
 UNRESOLVED = ("answer_key_review", "independent_editorial_authority", "source_dependency_evidence", "usage_rights_clearance")
 
 
@@ -52,7 +55,7 @@ def _texts(xs: Any, *, minimum: int = 1) -> bool:
 
 
 def _asset(asset: Any) -> bool:
-    return (isinstance(asset, dict) and all(_text(asset.get(k)) for k in ("logicalId", "provider", "model", "mediaType", "storage"))
+    return (isinstance(asset, dict) and asset.keys() <= ASSET_FIELDS and all(_text(asset.get(k)) for k in ("logicalId", "provider", "model", "mediaType", "storage"))
             and asset["mediaType"] in ("audio", "image")
             and type(asset.get("revision")) is int and asset["revision"] > 0
             and isinstance(asset.get("sha256"), str) and bool(_HEX.fullmatch(asset["sha256"]))
@@ -68,12 +71,15 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
         return ["CONTENT_NOT_OBJECT"]
     if any(field not in payload for field in REQUIRED[recipe]):
         return ["CONTENT_REQUIRED_FIELD_MISSING"]
+    if payload.keys() - set(REQUIRED[recipe]):
+        return ["CONTENT_FIELD_NOT_ALLOWED"]
     errors = []
     if recipe == "N1-01":
         if not _text(payload["viCue"]) or not _texts(payload["enExpressions"]) or not _texts(payload["senseRefs"]):
             errors.append("FLASHCARD_CONTENT_INVALID")
         elif (len(set(payload["enExpressions"])) != len(payload["enExpressions"]) or
-              not all(_UUID7_SENSE.fullmatch(s) for s in payload["senseRefs"])):
+              not all(_UUID7_SENSE.fullmatch(s) for s in payload["senseRefs"]) or
+              len(set(payload["senseRefs"])) != len(payload["senseRefs"])):
             errors.append("FLASHCARD_SENSE_OR_DUPLICATE_INVALID")
     elif recipe == "N2-06":
         if (not all(_text(payload[k]) for k in ("context", "prompt", "key", "rationale"))
@@ -111,7 +117,7 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
         tokens, orders = payload["tokens"], payload["acceptedOrderings"]
         if (not _text(payload["context"]) or not _text(payload["explanation"])
                 or not _texts(tokens, minimum=2) or not isinstance(orders, list) or not orders
-                or not all(isinstance(o, list) and sorted(o) == sorted(tokens) for o in orders)
+                or not all(isinstance(o, list) and _texts(o) and sorted(o) == sorted(tokens) for o in orders)
                 or len({_canonical(o) for o in orders}) != len(orders)
                 or not isinstance(payload["constraints"], list)
                 or not all(_text(c) for c in payload["constraints"])):
@@ -119,18 +125,28 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
     return errors
 
 
-def _media_issues(payload: dict, media_root: str | None) -> list[str]:
-    if media_root is None:
-        return []
-    root = Path(media_root).resolve(strict=True)
-    assets = payload.get("assets", [])
-    if "audio" in payload:
-        assets = [payload["audio"], *assets]
+def _assets(recipe: str, payload: dict) -> list[dict]:
+    if recipe == "N3-11":
+        return payload["assets"]
+    if recipe in ("K1-16", "K1-17"):
+        return [payload["audio"]]
+    return []
+
+
+def _isolate_rights(recipe: str, payload: dict) -> tuple[dict, dict]:
+    content = deepcopy(payload)
+    claims = []
+    for asset in _assets(recipe, content):
+        claims.append({"logicalId": asset["logicalId"], "revision": asset["revision"],
+                       "claimedStatus": asset["rightsStatus"]})
+        asset["rightsStatus"] = "unknown"
+    return content, {"generatorClaims": claims, "authenticatedEvidence": [],
+                     "clearance": "UNVERIFIED"}
+
+
+def _media_issues(assets: list[dict], root: Path) -> list[str]:
     errors = []
     for asset in assets:
-        if not isinstance(asset, dict) or asset.get("storage") != "local-fixture":
-            # No claim about remote Google Drive availability or rights.
-            continue
         locator = asset.get("locator")
         if not isinstance(locator, str) or not locator or Path(locator).is_absolute():
             errors.append("MEDIA_LOCATOR_INVALID")
@@ -169,11 +185,65 @@ def load_contract(path: str) -> Draft202012Validator:
 def check_quality(schemas: str | None, quality_input: str | None) -> dict:
     if not schemas or not quality_input:
         return {"status": "NOT_VERIFIED", "issues": ["PRIVATE_LEXICAL_QA_NOT_RUN"]}
-    source = json.loads(Path(quality_input).read_text(encoding="utf-8"))
-    result = prepare_batch(source, blank_state(), SchemaDirectory(schemas), dry_run=True)[1]
+    try:
+        source = json.loads(Path(quality_input).read_text(encoding="utf-8"))
+        result = prepare_batch(source, blank_state(), SchemaDirectory(schemas), dry_run=True)[1]
+    except (OSError, ValueError, UnicodeError):
+        return {"status": "HOLD", "issues": ["PRIVATE_LEXICAL_QA_INPUT_INVALID"],
+                "publicationEligible": False}
     ok = result.get("status") == "dry-run" and not result.get("issues")
     return {"status": "PASS" if ok else "HOLD", "issues": [] if ok else ["PRIVATE_LEXICAL_QA_FAILED"],
             "publicationEligible": False}
+
+
+def _candidate_quality(item: dict, checks: dict, issues: list[str]) -> dict:
+    statuses = checks.values()
+    status = "FAIL" if "FAIL" in statuses else (
+        "NOT_VERIFIED" if "NOT_VERIFIED" in statuses else "PASS")
+    return {"candidateId": item["candidateId"], "revision": item["revision"],
+            "contentHash": item.get("contentHash"), "status": status,
+            "checks": checks, "issues": sorted(set(issues))}
+
+
+def _check_generated(item: dict, contract: Draft202012Validator | None,
+                     media_root: str | None) -> tuple[dict[str, str], list[str]]:
+    recipe, content = item["recipe"], item["content"]
+    issues = validate_content(recipe, content)
+    checks = {"recipeContent": "FAIL" if issues else "PASS",
+              "producerContract": "NOT_VERIFIED", "mediaMetadata": "NOT_APPLICABLE",
+              "localMediaIntegrity": "NOT_APPLICABLE", "sourceReferenceResolution": "NOT_VERIFIED",
+              "editorialCorrectness": "NOT_VERIFIED"}
+    if contract is not None:
+        valid = contract.is_valid(item)
+        checks["producerContract"] = "PASS" if valid else "FAIL"
+        if not valid:
+            issues.append("PRIVATE_CONTRACT_INVALID")
+    if recipe in ("N3-11", "K1-16", "K1-17"):
+        if checks["recipeContent"] == "FAIL":
+            checks.update(mediaMetadata="NOT_VERIFIED", localMediaIntegrity="NOT_VERIFIED")
+        else:
+            assets = _assets(recipe, content)
+            checks["mediaMetadata"] = "PASS"
+            local = [asset for asset in assets if asset["storage"] == "local-fixture"]
+            if local and media_root is not None:
+                try:
+                    root = Path(media_root).resolve(strict=True)
+                    media_issues = _media_issues(local, root)
+                except (OSError, ValueError):
+                    media_issues = ["MEDIA_NOT_AVAILABLE"]
+                issues.extend(media_issues)
+                checks["localMediaIntegrity"] = "FAIL" if media_issues else "PASS"
+            else:
+                checks["localMediaIntegrity"] = "NOT_VERIFIED"
+            if len(local) != len(assets):
+                checks["remoteMediaIntegrity"] = "NOT_VERIFIED"
+    return checks, issues
+
+
+def _reject(item: dict, issues: list[str], checks: dict | None = None) -> dict:
+    return {"candidateId": item["candidateId"], "seedId": item["seedId"],
+            "status": "REJECTED", "issues": sorted(set(issues)),
+            "generatedContentQuality": _candidate_quality(item, checks or {"generation": "FAIL"}, issues)}
 
 
 class Worker(Protocol):
@@ -264,33 +334,37 @@ async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
             for attempt in range(retries + 1):
                 try:
                     output = await asyncio.wait_for(worker.generate(seed), timeout)
+                    revision = seed.get("expectedRevision", 0) + 1
+                    identity = {"candidateId": "spn_" + key, "seedId": seed_id, "revision": revision}
                     if not isinstance(output, dict):
-                        return {"candidateId": "spn_" + key, "seedId": seed_id,
-                                "status": "REJECTED", "issues": ["WORKER_OUTPUT_NOT_OBJECT"]}
-                    item = {"candidateId": "spn_" + key, "batchId": batch["batchId"], "seedId": seed_id,
+                        return _reject(identity, ["WORKER_OUTPUT_NOT_OBJECT"])
+                    item = {**identity, "batchId": batch["batchId"],
                             "recipe": seed["recipe"], "sourceRef": seed["sourceRef"],
                             "sourceRevision": seed["sourceRevision"], "variantKey": seed.get("variantKey", "default"),
                             "content": output, "provenance": {"provider": worker.provider, "model": worker.model,
                             "workerId": seed_id, "mode": "synthetic" if worker.provider == "synthetic" else "real_ai"},
-                            "revision": 1, "status": "HOLD", "unresolvedEvidence": list(UNRESOLVED)}
-                    errors = validate_content(seed["recipe"], output)
-                    if not errors:
-                        errors.extend(_media_issues(output, media_root))
-                    if contract is not None:
-                        errors.extend("PRIVATE_CONTRACT_INVALID" for _ in list(contract.iter_errors(item))[:1])
+                            "status": "HOLD", "unresolvedEvidence": list(UNRESOLVED)}
+                    # The v1 producer envelope describes the initial draft. The CAS
+                    # revision belongs to the ledger and its quality evidence.
+                    envelope = {**item, "revision": 1}
+                    checks, errors = _check_generated(envelope, contract, media_root)
                     if errors:
-                        return {"candidateId": item["candidateId"], "seedId": seed_id,
-                                "status": "REJECTED", "issues": sorted(set(errors))}
-                    item["contentHash"] = _hash(output)
-                    item["expectedRevision"] = seed.get("expectedRevision", 0)
+                        return _reject({**identity, "contentHash": _hash(output)}, errors, checks)
+                    content, rights = _isolate_rights(seed["recipe"], output)
+                    if content != output and contract is not None and not contract.is_valid({**envelope, "content": content}):
+                        checks["producerContract"] = "FAIL"
+                        return _reject({**identity, "contentHash": _hash(output)}, ["PRIVATE_CONTRACT_INVALID"], checks)
+                    item.update(content=content, contentHash=_hash(content), rights=rights,
+                                expectedRevision=revision - 1)
+                    item["generatedContentQuality"] = _candidate_quality(item, checks, errors)
                     return item
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     if attempt == retries:
                         message = (str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "WORKER_FAILURE")
-                        return {"candidateId": "spn_" + key, "seedId": seed_id,
-                                "status": "REJECTED", "issues": [message[:80]]}
+                        return _reject({"candidateId": "spn_" + key, "seedId": seed_id,
+                                        "revision": seed.get("expectedRevision", 0) + 1}, [message[:80]])
                     await asyncio.sleep(0.01 * (attempt + 1))
         raise AssertionError("Unreachable")
 
@@ -304,18 +378,36 @@ async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
         raise
     seen_scope: dict[tuple, dict] = {}
     seen_hash: dict[tuple, dict] = {}
-    for item in result:
+    for index, item in enumerate(result):
         if item["status"] == "REJECTED":
             continue
         scope = (item["recipe"], item["sourceRef"], item["variantKey"])
         identical = (item["recipe"], item["contentHash"])
         if scope in seen_scope:
-            item["status"], item["issues"] = "REJECTED", ["DUPLICATE_OR_CONFLICTING_SOURCE_VARIANT"]
+            checks = {**item["generatedContentQuality"]["checks"], "batchUniqueness": "FAIL"}
+            result[index] = _reject(item, ["DUPLICATE_OR_CONFLICTING_SOURCE_VARIANT"], checks)
         elif identical in seen_hash:
-            item["status"], item["issues"] = "REJECTED", ["DUPLICATE_CONTENT"]
+            checks = {**item["generatedContentQuality"]["checks"], "batchUniqueness": "FAIL"}
+            result[index] = _reject(item, ["DUPLICATE_CONTENT"], checks)
         else:
             seen_scope[scope], seen_hash[identical] = item, item
+            item["generatedContentQuality"]["checks"]["batchUniqueness"] = "PASS"
     return result
+
+
+def _batch_quality(candidates: list[dict]) -> dict:
+    results = [item["generatedContentQuality"] for item in candidates]
+    statuses = {result["status"] for result in results}
+    status = "FAIL" if "FAIL" in statuses else "NOT_VERIFIED" if "NOT_VERIFIED" in statuses else "PASS"
+    return {"status": status, "candidates": results}
+
+
+def _replay_report(report: dict) -> dict:
+    return {**report, "replayed": True,
+            "lexicalSourceQuality": report.get("lexicalSourceQuality", report["quality"]),
+            "generatedContentQuality": report.get("generatedContentQuality", {
+                "status": "NOT_VERIFIED", "issues": ["LEGACY_REPORT_WITHOUT_GENERATED_CHECKS"],
+                "candidates": []})}
 
 
 def persist(batch: dict, generated: list[dict], path: str, quality: dict) -> dict:
@@ -349,34 +441,50 @@ def persist(batch: dict, generated: list[dict], path: str, quality: dict) -> dic
         if old:
             if old["inputHash"] != input_hash:
                 raise ValueError("BATCH_REPLAY_CONFLICT")
-            return {**old["report"], "replayed": True}
+            return _replay_report(old["report"])
         statuses = []
         for item in generated:
-            if item["status"] == "REJECTED":
-                statuses.append({"candidateId": item["candidateId"], "status": "REJECTED",
-                                 "issues": item["issues"]})
-                continue
             identifier = item["candidateId"]
+            evidence = item.get("generatedContentQuality") or _candidate_quality(
+                {**item, "revision": item.get("revision", 1)}, {"generation": "NOT_VERIFIED"}, [])
+            entry = {"candidateId": identifier, "generatedContentQuality": evidence}
+            if item["status"] == "REJECTED":
+                statuses.append({**entry, "status": "REJECTED", "issues": item["issues"]})
+                continue
             before = state["candidates"].get(identifier)
-            expected = item.pop("expectedRevision", 0)
+            expected = item.get("expectedRevision", 0)
             if (before is None and expected != 0) or (before is not None and expected != before["revision"]):
-                statuses.append({"candidateId": identifier, "status": "REJECTED", "issues": ["CAS_CONFLICT"]})
+                statuses.append({**entry, "status": "REJECTED", "issues": ["CAS_CONFLICT"]})
                 continue
-            if before and (before["contentHash"] == item["contentHash"] and
+            content, rights = _isolate_rights(item["recipe"], item["content"])
+            if content == item["content"] and "rights" in item:
+                rights["generatorClaims"] = item["rights"].get("generatorClaims", [])
+            if before and (before["content"] == content and before.get("rights") == rights and
                            before["sourceRevision"] == item["sourceRevision"]):
-                statuses.append({"candidateId": identifier, "status": "HOLD", "issues": ["UNCHANGED_REVISION"]})
+                evidence = {**evidence, "revision": before["revision"]}
+                statuses.append({**entry, "generatedContentQuality": evidence, "status": "HOLD",
+                                 "revision": before["revision"], "issues": ["UNCHANGED_REVISION"]})
                 continue
-            next_item = {**item, "revision": 1 if before is None else before["revision"] + 1}
+            revision = expected + 1
+            next_item = {**item, "revision": revision, "content": content, "contentHash": _hash(content),
+                         "rights": rights}
+            if (evidence["candidateId"] != identifier or evidence["revision"] != revision
+                    or evidence["contentHash"] != next_item["contentHash"]):
+                evidence = _candidate_quality(next_item, {"generation": "NOT_VERIFIED"}, [])
+            next_item["generatedContentQuality"] = evidence
+            next_item.pop("expectedRevision", None)
             state["candidates"][identifier] = next_item
             state["history"].append({"candidateId": identifier, "batchId": batch["batchId"],
                                      "before": before, "after": next_item})
-            statuses.append({"candidateId": identifier, "status": "HOLD",
-                             "issues": list(UNRESOLVED)})
+            statuses.append({**entry, "generatedContentQuality": evidence, "status": "HOLD",
+                             "revision": revision, "issues": list(UNRESOLVED)})
         report = {"batchId": batch["batchId"], "status": "DRAFT_HOLD",
                   "generationMode": generated[0].get("provenance", {}).get("mode", "synthetic") if generated else "unknown",
                   "generated": len(generated), "drafts": sum(s["status"] == "HOLD" for s in statuses),
                   "rejected": sum(s["status"] == "REJECTED" for s in statuses),
-                  "quality": quality, "candidates": statuses, "publicationEligible": False}
+                  "quality": quality, "lexicalSourceQuality": quality,
+                  "generatedContentQuality": _batch_quality(statuses),
+                  "candidates": statuses, "publicationEligible": False}
         state["runs"][batch["batchId"]] = {"inputHash": input_hash, "report": report}
         _atomic_save(state_path, state)
         return report
@@ -414,8 +522,9 @@ def run(argv: list[str] | None = None) -> int:
             old = existing["runs"][batch["batchId"]]
             if old["inputHash"] != _hash(batch):
                 raise ValueError("BATCH_REPLAY_CONFLICT")
-            print(_canonical({**old["report"], "replayed": True}))
-            return 0
+            report = _replay_report(old["report"])
+            print(_canonical(report))
+            return 0 if report["rejected"] == 0 else 1
         validator = load_contract(opts.contract)
         quality = check_quality(opts.schemas, opts.quality_input)
         result = asyncio.run(generate(batch, worker, concurrency=opts.concurrency,

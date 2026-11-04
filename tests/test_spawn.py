@@ -1,11 +1,15 @@
 """Public synthetic-only tests for the P0-a draft-only producer."""
 import asyncio
+from contextlib import redirect_stdout
+from io import StringIO
 from hashlib import sha256
 from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
 import unittest
+
+from test_quality import candidate, synth_schemas
 
 from english_action.spawn import (RECIPES, SyntheticWorker, generate, load_contract,
                                   persist, run, validate_content)
@@ -148,6 +152,25 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
             value = await generate(batch([fixture]), SyntheticWorker(), media_root=d)
             self.assertEqual(value[0]["issues"], ["MEDIA_PATH_UNSAFE"])
 
+    async def test_rights_claims_are_untrusted_even_when_assets_disagree(self):
+        fixture = seed("N3-11")
+        assets = fixture["fixture"]["assets"]
+        assets[0]["rightsStatus"] = "redistributable"
+        assets[1]["rightsStatus"] = "permission_required"
+        item = (await generate(batch([fixture]), SyntheticWorker()))[0]
+        self.assertEqual(item["status"], "HOLD")
+        self.assertEqual(item["rights"]["clearance"], "UNVERIFIED")
+        self.assertEqual(item["rights"]["authenticatedEvidence"], [])
+        self.assertEqual([c["claimedStatus"] for c in item["rights"]["generatorClaims"]],
+                         ["redistributable", "permission_required"])
+        self.assertEqual([a["rightsStatus"] for a in item["content"]["assets"]], ["unknown", "unknown"])
+        self.assertEqual(assets[0]["rightsStatus"], "redistributable")
+
+        assets[0]["authenticatedEvidence"] = ["forged"]
+        rejected = (await generate(batch([fixture]), SyntheticWorker()))[0]
+        self.assertEqual(rejected["status"], "REJECTED")
+        self.assertEqual(rejected["generatedContentQuality"]["checks"]["recipeContent"], "FAIL")
+
     async def test_private_contract_rejects_invalid(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "schema.json"
@@ -190,7 +213,15 @@ class StoreTests(unittest.TestCase):
             c["seeds"][0]["expectedRevision"] = 1
             accepted = persist(c, asyncio.run(generate(c, SyntheticWorker())), path, q)
             self.assertEqual(accepted["drafts"], 1)
-            self.assertEqual(len(json.loads(Path(path).read_text())["history"]), 2)
+            state = json.loads(Path(path).read_text())
+            self.assertEqual(len(state["history"]), 2)
+            latest = state["history"][-1]["after"]
+            quality = accepted["generatedContentQuality"]["candidates"][0]
+            self.assertEqual(latest["revision"], 2)
+            self.assertEqual(latest["generatedContentQuality"], quality)
+            self.assertEqual(quality["revision"], 2)
+            self.assertEqual(quality["contentHash"], latest["contentHash"])
+            self.assertNotEqual(quality["contentHash"], first["generatedContentQuality"]["candidates"][0]["contentHash"])
             with self.assertRaisesRegex(ValueError, "BATCH_REPLAY_CONFLICT"):
                 persist({**a, "seeds": [{**a["seeds"][0], "request": {"changed": True}}]}, generated, path, q)
 
@@ -206,6 +237,50 @@ class StoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unsafe"):
                 persist(a, forged, target, {"status": "NOT_VERIFIED"})
             self.assertFalse(Path(target).exists())
+
+    def test_cli_keeps_lexical_and_candidate_quality_independent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            schemas = root / "schemas"
+            synth_schemas(schemas)
+            contract = root / "producer.json"
+            contract.write_text(json.dumps({"type": "object", "required": ["candidateId", "content"]}))
+            lexical = root / "lexical.json"
+            source = root / "spawn.json"
+            for lexical_valid in (True, False):
+                for generated_valid in (True, False):
+                    with self.subTest(lexical=lexical_valid, generated=generated_valid):
+                        lexical.write_text(json.dumps(candidate() if lexical_valid else {}))
+                        fixture = seed("N1-01")
+                        if not generated_valid:
+                            fixture["fixture"]["senseRefs"] = ["invalid-reference"]
+                        source.write_text(json.dumps(batch([fixture])))
+                        state = root / f"state-{lexical_valid}-{generated_valid}.json"
+                        stdout = StringIO()
+                        with redirect_stdout(stdout):
+                            code = run(["--input", str(source), "--contract", str(contract),
+                                        "--schemas", str(schemas), "--quality-input", str(lexical),
+                                        "--state", str(state)])
+                        self.assertEqual(code, 0 if generated_valid else 1)
+                        report = json.loads(stdout.getvalue())
+                        self.assertEqual(report["lexicalSourceQuality"]["status"],
+                                         "PASS" if lexical_valid else "HOLD")
+                        quality = report["generatedContentQuality"]
+                        self.assertEqual(quality["status"], "NOT_VERIFIED" if generated_valid else "FAIL")
+                        evidence = quality["candidates"][0]
+                        self.assertEqual(evidence["candidateId"], report["candidates"][0]["candidateId"])
+                        self.assertEqual(evidence["revision"], 1)
+                        self.assertEqual(evidence["checks"]["recipeContent"],
+                                         "PASS" if generated_valid else "FAIL")
+                        self.assertEqual(evidence["checks"]["producerContract"], "PASS")
+                        self.assertEqual(evidence["checks"]["sourceReferenceResolution"], "NOT_VERIFIED")
+                        self.assertFalse(report["publicationEligible"])
+                        saved = json.loads(state.read_text())["candidates"]
+                        self.assertEqual(len(saved), int(generated_valid))
+                        if generated_valid:
+                            stored = saved[evidence["candidateId"]]
+                            self.assertEqual(evidence["contentHash"], stored["contentHash"])
+                            self.assertEqual(stored["rights"]["clearance"], "UNVERIFIED")
 
     def test_cli_requires_authorized_provider_and_keeps_private_contract(self):
         with tempfile.TemporaryDirectory() as d:

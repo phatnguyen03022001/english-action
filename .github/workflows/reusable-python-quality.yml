@@ -64,7 +64,7 @@ jobs:
           with tempfile.TemporaryDirectory(dir=os.environ["RUNNER_TEMP"]) as tmp:
               state = Path(tmp) / "state.json"
               completed = subprocess.run(
-                  [sys.executable, "-m", "english_action", "validate",
+                  [sys.executable, "-m", "english_action.content.cli", "validate",
                    "--schemas", "schemas", "--input", str(source), "--state", str(state)],
                   capture_output=True, text=True, check=False)
               if completed.returncode != 0:

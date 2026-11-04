@@ -13,6 +13,10 @@ python3 -m english_action validate --schemas /path/to/private/schemas --input /p
 
 Operations: `schemas-check`, `schemas-generate --version v1|v2`, `validate`, `prepare`, `bind-evidence`, `revise`, `promote` and `check`. Schema generation uses caller-owned V1/V2 registries and writes only on explicit `schemas-generate`; normal schema checks never write. Persistent state mutations use exclusive locks, private permissions, atomic replacement, replay/CAS/history and fail-closed input handling.
 
+Spawn reports keep `quality` as a compatibility alias for `lexicalSourceQuality`. `generatedContentQuality` records checks and issues for each candidate ID, revision and content hash. A draft may pass recipe, producer-contract and local-media checks while external references or editorial correctness remain `NOT_VERIFIED`. Replay of historical reports retains their original lexical result and marks generated-content quality as unverified when no corresponding evidence was recorded.
+
+Generator media-rights labels appear only as untrusted claims in `rights.generatorClaims`. New draft content uses `rightsStatus: unknown`. Spawn records no authenticated evidence, keeps clearance `UNVERIFIED` and never makes drafts eligible for publication. Older immutable snapshots may contain raw claims and confer no clearance.
+
 The Python implementation includes V1/V2 registry schemas, lexical and lifecycle graph validation, claim-specific evidence and rights checks, editorial eligibility, versioned draft operations, V1 representation migration and eight-axis Golden QA. Public tests use synthetic fixtures only. English-content executes its own private parity and historical QA tests in its private runner.
 
 ## Two independent safety gates
