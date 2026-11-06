@@ -125,7 +125,7 @@ def select_work(api, repo, target, manual_sha, creator):
 
 
 def clean_env():
-    # Private commands have no API/app credentials, and cannot persist git auth.
+    # Private commands have no API credentials, and cannot persist git auth.
     return {key: value for key, value in os.environ.items()
             if not any(word in key.upper() for word in
                        ("TOKEN", "PRIVATE_KEY", "SECRET", "PASSWORD"))
@@ -239,22 +239,25 @@ def run(api, repo, target, work):
 
 
 def main():
-    token = os.environ.get("CI_APP_TOKEN", "")
-    creator = os.environ.get("CI_APP_SLUG", "") + "[bot]"
-    if not token or creator == "[bot]":
-        raise Blocked("Configure CI_APP_CLIENT_ID and CI_APP_PRIVATE_KEY in english-action")
+    token = os.environ.get("CENTRAL_CI_TOKEN", "")
+    if not token:
+        raise Blocked("Configure the CENTRAL_CI_TOKEN Actions secret in english-action")
     repository = os.environ.get("SOURCE_REPOSITORY", "all") or "all"
     manual_sha = os.environ.get("SOURCE_SHA", "")
     if repository not in {"all", *CONFIG["targets"]}:
         raise Blocked("Unsupported repository")
     if manual_sha and repository == "all":
         raise Blocked("Manual SHA requires one repository")
+    api = GitHub(token)
+    creator = api.request("/user").get("login")
+    if not isinstance(creator, str) or not creator:
+        raise Blocked("Token identity could not be verified")
     bad = False
     for repo, target in CONFIG["targets"].items():
         if repository not in {"all", repo}:
             continue
         try:
-            work = select_work(api := GitHub(token), repo, target, manual_sha, creator)
+            work = select_work(api, repo, target, manual_sha, creator)
             bad |= run(api, repo, target, work)
         except Blocked:
             print(f"BLOCKED: {repo}; access/history/results unavailable", flush=True)

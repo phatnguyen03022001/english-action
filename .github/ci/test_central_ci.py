@@ -90,6 +90,29 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(verify.call_count, 1)
         self.assertEqual(self.api.results[-1][3], "BLOCKED")
 
+    def test_pat_identity_is_used_without_app_bot_suffix(self):
+        with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": "private",
+                                     "SOURCE_REPOSITORY": "english", "SOURCE_SHA": ""}), \
+                patch.object(ci, "GitHub", return_value=self.api), \
+                patch.object(self.api, "request", create=True,
+                             return_value={"login": "token-owner"}) as request, \
+                patch.object(ci, "select_work", return_value=[]) as select, \
+                patch.object(ci, "run", return_value=False):
+            self.assertEqual(ci.main(), 0)
+        request.assert_called_once_with("/user")
+        self.assertEqual(select.call_args.args[-1], "token-owner")
+
+    def test_invalid_token_identity_is_blocked_before_source_access(self):
+        with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": "invalid",
+                                     "SOURCE_REPOSITORY": "all", "SOURCE_SHA": ""}), \
+                patch.object(ci, "GitHub", return_value=self.api), \
+                patch.object(self.api, "request", create=True,
+                             side_effect=ci.Blocked("denied")), \
+                patch.object(ci, "select_work") as select:
+            with self.assertRaises(ci.Blocked):
+                ci.main()
+        select.assert_not_called()
+
     def test_status_write_failure_never_runs_tests_or_reports_pass(self):
         with patch.object(self.api, "status", side_effect=ci.Blocked("denied")), \
                 patch.object(ci, "verify") as verify, patch.object(ci, "record") as record:
@@ -146,17 +169,17 @@ class HistoryTests(unittest.TestCase):
         self.assertTrue(payload["target_url"].endswith("/123"))
 
     def test_auth_missing_is_blocked(self):
-        with patch.dict(os.environ, {"CI_APP_TOKEN": "", "CI_APP_SLUG": ""}):
+        with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": ""}):
             with self.assertRaises(ci.Blocked):
                 ci.main()
 
 
 class IsolationTests(unittest.TestCase):
     def test_child_commands_have_no_credentials_or_public_workflow_output_files(self):
-        with patch.dict(os.environ, {"CI_APP_TOKEN": "do-not-pass", "GITHUB_TOKEN": "hidden",
+        with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": "do-not-pass", "GITHUB_TOKEN": "hidden",
                                      "GIT_CONFIG_COUNT": "1", "GITHUB_STEP_SUMMARY": "private"}):
             env = ci.clean_env()
-        self.assertNotIn("CI_APP_TOKEN", env)
+        self.assertNotIn("CENTRAL_CI_TOKEN", env)
         self.assertNotIn("GITHUB_TOKEN", env)
         self.assertNotIn("GIT_CONFIG_COUNT", env)
         self.assertNotIn("GITHUB_STEP_SUMMARY", env)

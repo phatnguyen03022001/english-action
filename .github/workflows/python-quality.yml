@@ -80,4 +80,4 @@ jobs:
     needs: central-ci-contract-tests
     uses: ./.github/workflows/central-private-ci.yml
     secrets:
-      CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+      CENTRAL_CI_TOKEN: ${{ secrets.CENTRAL_CI_TOKEN }}

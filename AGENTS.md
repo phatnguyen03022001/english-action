@@ -28,14 +28,16 @@ apply. No external CI, worker service or new infrastructure is introduced.
 - Central execution uses schedule plus manual full-SHA dispatch. The existing public
   push CI calls the central workflow after its contract tests for bootstrap and
   ongoing central-change verification. No cross-commit cancellation group.
-- Read both private repositories only through an explicitly configured GitHub App,
-  scoped to Contents read and Commit statuses write. The central GITHUB_TOKEN
-  cannot substitute for that installation token. Never print/store a private key.
+- Read both private repositories through one explicitly configured fine-grained
+  PAT in the CENTRAL_CI_TOKEN Actions secret, scoped to exactly those two repos:
+  Contents read and Commit statuses write. This R04-02 credential choice supersedes
+  the legacy PAT prohibition below. The central GITHUB_TOKEN cannot substitute
+  for this token. Never print, commit or pass it to private test processes.
 - Public logs and summaries contain only repository/SHA, workflow SHA, immutable
   validator/engine pin, suite and redacted outcome. No private checkout, fixture,
   test output, generated drafts, logs or caches may be uploaded or committed.
   The runner scratch checkout is ephemeral. Private test processes receive no
-  installation token or public workflow output-file environment variables.
+  CI token or public workflow output-file environment variables.
 - Preserve existing pinned validators, commands, negative/replay/media checks and
   fail-closed publication. CI PASS is only the technical suite result; generated
   content stays HOLD with rights/editorial NOT VERIFIED.
@@ -43,7 +45,7 @@ apply. No external CI, worker service or new infrastructure is introduced.
   succeeds. Then remove them and verify central checks on each exact cutover SHA.
   A credential/setup/permission failure is BLOCKED, never PASS or completed migration.
 - Do not change branch rules, Actions settings, visibility, credentials or billing
-  as a side effect. Owner credential configuration is a separate manual operation
+  as a side effect. Owner token configuration is a separate manual operation
   when the current connector has no secrets/variables administration capability.
 
 ## Legacy reusable workflow execution boundary

@@ -78,28 +78,33 @@ The reusable workflow checks out the calling repository's triggering `github.sha
 
 Implementation is staged in [central-private-ci.yml](.github/workflows/central-private-ci.yml)
 and [.github/ci](.github/ci/central_ci.py). **Cutover is not complete until the
-GitHub App works, each central source check succeeds, the three old private
+central token works, each central source check succeeds, the three old private
 workflows are deleted, and their deletion commits pass central verification.**
 Existing reusable workflows remain compatible; historical caller guidance below
 describes the previous execution model.
 
 ### Credential configuration
 
-In this repository's Actions settings, configure:
+The central workflow runs CI for both private repositories using exactly one
+Actions secret in english-action: **CENTRAL_CI_TOKEN**. No GitHub App, Client ID,
+PEM key, OAuth callback or webhook is needed.
 
-| Setting | Value |
-| --- | --- |
-| Actions variable CI_APP_CLIENT_ID | Client ID of the Owner's GitHub App |
-| Actions secret CI_APP_PRIVATE_KEY | The App's PEM private key |
-| App installation repositories | Exactly english and english-content |
-| App repository permissions | Contents: read; Commit statuses: write (Metadata read is implicit) |
+1. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+   under the repository owner's account. Choose resource owner
+   phatnguyen03022001, **Only select repositories**, then english and english-content.
+2. Grant **Contents: read-only** and **Commit statuses: read and write**.
+   Metadata read is implicit; no source-write, Actions-write or admin scope is needed.
+3. Save its value as **CENTRAL_CI_TOKEN** in
+   [english-action Actions secrets](https://github.com/phatnguyen03022001/english-action/settings/secrets/actions).
+   Give the token an appropriate expiry; replace this secret when renewing/revoking it.
+4. Run **Central Private Repository CI** on main with repository all and SHA empty.
 
-Do not send the key/token in chat, write it to Git, or assume the connector's
-GitHub App is a runner credential. The workflow mints/revokes a narrowly scoped
-installation token using a full-SHA-pinned official action. A missing setting
-fails explicitly as BLOCKED. Access and status-write are verified by actual
-requests before any private test execution. Runner/billing/policy denial is
-NOT VERIFIED, never a synthetic PASS.
+The runner identifies the token's actual user for status attribution and verifies
+private read/status-write access through real requests. A missing/invalid/expired
+token is BLOCKED. The central GITHUB_TOKEN and the ChatGPT GitHub connector's
+credentials cannot substitute for this cross-repository secret. Never send the
+token in chat, commit it or expose it to private test processes. Runner/billing/
+policy denial is NOT VERIFIED, never a synthetic PASS.
 
 ### Commands and attribution
 
@@ -161,5 +166,5 @@ The old reusable APIs remain available. Pending credentials or a failed central
 integration is an unfinished migration, not permission to remove working checks.
 
 Official references: [GitHub scheduled/manual triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows),
-[GitHub App token action](https://github.com/actions/create-github-app-token),
+[fine-grained tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens),
 [commit status API](https://docs.github.com/en/rest/commits/statuses).
