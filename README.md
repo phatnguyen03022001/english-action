@@ -86,7 +86,7 @@ describes the previous execution model.
 ### Credential configuration
 
 The central workflow runs CI for both private repositories using exactly one
-Actions secret in english-action: **CENTRAL_CI_TOKEN**. No GitHub App, Client ID,
+Actions secret in english-action: **english**. No GitHub App, Client ID,
 PEM key, OAuth callback or webhook is needed.
 
 1. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
@@ -94,7 +94,7 @@ PEM key, OAuth callback or webhook is needed.
    phatnguyen03022001, **Only select repositories**, then english and english-content.
 2. Grant **Contents: read-only** and **Commit statuses: read and write**.
    Metadata read is implicit; no source-write, Actions-write or admin scope is needed.
-3. Save its value as **CENTRAL_CI_TOKEN** in
+3. Save its value as **english** in
    [english-action Actions secrets](https://github.com/phatnguyen03022001/english-action/settings/secrets/actions).
    Give the token an appropriate expiry; replace this secret when renewing/revoking it.
 4. Run **Central Private Repository CI** on main with repository all and SHA empty.

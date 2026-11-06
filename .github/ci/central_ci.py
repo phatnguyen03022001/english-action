@@ -241,7 +241,7 @@ def run(api, repo, target, work):
 def main():
     token = os.environ.get("CENTRAL_CI_TOKEN", "")
     if not token:
-        raise Blocked("Configure the CENTRAL_CI_TOKEN Actions secret in english-action")
+        raise Blocked("Configure the english Actions secret in english-action")
     repository = os.environ.get("SOURCE_REPOSITORY", "all") or "all"
     manual_sha = os.environ.get("SOURCE_SHA", "")
     if repository not in {"all", *CONFIG["targets"]}:

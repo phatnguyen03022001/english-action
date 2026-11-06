@@ -24,7 +24,7 @@ on:
         type: string
         default: ''
     secrets:
-      CENTRAL_CI_TOKEN:
+      english:
         required: false
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
           python-version: '3.12'
       - name: Catch up immutable private revisions and publish attributable statuses
         env:
-          CENTRAL_CI_TOKEN: ${{ secrets.CENTRAL_CI_TOKEN }}
+          CENTRAL_CI_TOKEN: ${{ secrets.english }}
           SOURCE_REPOSITORY: ${{ inputs.source_repository || 'all' }}
           SOURCE_SHA: ${{ inputs.source_sha || '' }}
         run: python .github/ci/central_ci.py

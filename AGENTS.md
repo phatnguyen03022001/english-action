@@ -29,7 +29,7 @@ apply. No external CI, worker service or new infrastructure is introduced.
   push CI calls the central workflow after its contract tests for bootstrap and
   ongoing central-change verification. No cross-commit cancellation group.
 - Read both private repositories through one explicitly configured fine-grained
-  PAT in the CENTRAL_CI_TOKEN Actions secret, scoped to exactly those two repos:
+  PAT in the english Actions secret, scoped to exactly those two repos:
   Contents read and Commit statuses write. This R04-02 credential choice supersedes
   the legacy PAT prohibition below. The central GITHUB_TOKEN cannot substitute
   for this token. Never print, commit or pass it to private test processes.
