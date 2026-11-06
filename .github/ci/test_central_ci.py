@@ -222,5 +222,17 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(fetch.kwargs["env"]["GIT_CONFIG_COUNT"], "1")
 
 
+
+class WorkflowBoundaryTests(unittest.TestCase):
+    def test_central_runner_has_readonly_local_permissions_and_explicit_secret(self):
+        workflow = (ci.ROOT.parent / "workflows/central-private-ci.yml").read_text()
+        self.assertRegex(workflow, r"permissions:\s*\n\s*contents: read")
+        self.assertIn("CENTRAL_CI_TOKEN: " + "$" + "{{ secrets.english }}", workflow)
+        self.assertNotRegex(workflow, r"contents:\s*write|secrets:\s*inherit|(?i:mongodb(?:\+srv)?:|git push|git commit|npm publish)")
+
+    def test_central_discovery_only_targets_the_two_authorized_repositories(self):
+        self.assertEqual(set(ci.CONFIG["targets"]), {"english", "english-content"})
+
+
 if __name__ == "__main__":
     unittest.main()

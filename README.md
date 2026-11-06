@@ -76,12 +76,16 @@ The reusable workflow checks out the calling repository's triggering `github.sha
 
 ## Central private repository CI (R04-02)
 
-Implementation is staged in [central-private-ci.yml](.github/workflows/central-private-ci.yml)
-and [.github/ci](.github/ci/central_ci.py). **Cutover is not complete until the
-central token works, each central source check succeeds, the three old private
-workflows are deleted, and their deletion commits pass central verification.**
-Existing reusable workflows remain compatible; historical caller guidance below
-describes the previous execution model.
+All GitHub Actions workflow YAML is owned here in
+[central-private-ci.yml](.github/workflows/central-private-ci.yml) and the existing
+public/reusable workflows. **english and english-content contain zero GitHub
+Actions workflow YAML.** [.github/ci](.github/ci/central_ci.py) discovers and tests
+their immutable source SHAs, then publishes each suite's status to its source SHA.
+The configured english secret has been verified for private reads and status
+writes. Per-commit statuses remain authoritative; older failed source revisions
+are preserved as failures when a subsequent correction passes.
+Historical private-caller descriptions above refer to the retained reusable APIs,
+which remain compatible for rollback.
 
 ### Credential configuration
 
@@ -150,15 +154,13 @@ Central tests use only synthetic/public fixtures.
 
 ### Cutover and rollback
 
-After credential configuration, verify the baseline sources centrally, including
-actual statuses on all three contexts. Exercise manual rerun and compare its
-source/workflow/pin metadata; synthetic tests cover dropped-commit recovery,
-pagination, failure attribution and setup denial. Only then delete
-english/.github/workflows/spec-validation.yml and both
-english-content/.github/workflows/{schema-conformance,spawn-draft}.yml;
-update their CI ownership guidance and verify each resulting exact SHA centrally.
-A recursive tree check must show zero files under both private
-.github/workflows/ directories.
+The migration verifies baseline sources centrally, removes the three old private
+workflows, updates ownership/link/governance checks, and verifies the exact new
+source SHAs. A recursive tree check must show zero files under both private
+.github/workflows/ directories. Real run retries verify manual recovery; synthetic
+tests cover full-SHA selection, dropped-commit recovery, pagination, failure
+attribution and setup denial. A future credential or central-run change must
+preserve those checks; do not infer an unexecuted check from older green CI.
 
 Rollback restores the old workflow files from their recorded migration baselines
 using a new main commit (never a reset/force-push); retain the immutable pins.

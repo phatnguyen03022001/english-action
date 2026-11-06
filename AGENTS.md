@@ -7,7 +7,7 @@
 - `phatnguyen03022001/english` — English learning platform / product specifications.
 - `phatnguyen03022001/english-content` — English learning content and data quality pipeline.
 
-**Current implementation (TASK 07):** public Python Engine, V1/V2 schema generator, synthetic regression suite, Linux CI and a verified private english-content consumer pinned to Python for schema/candidate commands. Real publication remains disabled; the subsequent english-content Python-only cutover at `79e7e1c74d98f6a4b57c9d9b75f3bb25d06048b5` preserved historical QA in Python and retired Node executable source/tests to Git history. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies, secrets, triggers, permissions and CI results. This repo is not a data store, content publisher, learner app, private-CI proxy, deployment service or general-purpose CI farm.
+**Current implementation (TASK 07):** public Python Engine, V1/V2 schema generator, synthetic regression suite, Linux CI and a verified private english-content consumer pinned to Python for schema/candidate commands. Real publication remains disabled; the subsequent english-content Python-only cutover at `79e7e1c74d98f6a4b57c9d9b75f3bb25d06048b5` preserved historical QA in Python and retired Node executable source/tests to Git history. **Target ownership:** this public repo additionally owns reusable Python Content Quality Engine source, safe shareable/public/synthetic test implementations and reusable CI. Private english-content owns production data, schemas, provenance, rights/editorial evidence, publication metadata and confidential fixtures/tests; private english owns learner pedagogy, assessment, progress, learner records and its private test execution. Both consumers retain their source-specific dependencies and private tests; R04-02 below centralizes all GitHub Actions workflows/triggers and publishes attributable results back to each source SHA. This repo is not a data store, content publisher, learner app, deployment service or general-purpose CI farm.
 
 Do not copy private source, private test fixtures, credentials, proprietary content, datasets, or learner data into this public repository, its logs, artifacts, caches, or issues.
 
@@ -29,8 +29,9 @@ apply. No external CI, worker service or new infrastructure is introduced.
   push CI calls the central workflow after its contract tests for bootstrap and
   ongoing central-change verification. No cross-commit cancellation group.
 - Read both private repositories through one explicitly configured fine-grained
-  PAT in the english Actions secret, scoped to exactly those two repos:
-  Contents read and Commit statuses write. This R04-02 credential choice supersedes
+  PAT in the english Actions secret. Required capabilities are Contents read and
+  Commit statuses write; the runner restricts targets to exactly those two repos
+  regardless of any broader token privileges. This R04-02 choice supersedes
   the legacy PAT prohibition below. The central GITHUB_TOKEN cannot substitute
   for this token. Never print, commit or pass it to private test processes.
 - Public logs and summaries contain only repository/SHA, workflow SHA, immutable
@@ -41,9 +42,10 @@ apply. No external CI, worker service or new infrastructure is introduced.
 - Preserve existing pinned validators, commands, negative/replay/media checks and
   fail-closed publication. CI PASS is only the technical suite result; generated
   content stays HOLD with rights/editorial NOT VERIFIED.
-- Keep old private workflows until real central verification/status attribution
-  succeeds. Then remove them and verify central checks on each exact cutover SHA.
-  A credential/setup/permission failure is BLOCKED, never PASS or completed migration.
+- The verified central read/status path replaces the three old private workflows.
+  Both private repositories must keep zero GitHub Actions workflow YAML. Verify
+  each exact source SHA; a credential/setup/permission failure is BLOCKED, never
+  PASS. Do not overwrite older failed source statuses when a correction passes.
 - Do not change branch rules, Actions settings, visibility, credentials or billing
   as a side effect. Owner token configuration is a separate manual operation
   when the current connector has no secrets/variables administration capability.
