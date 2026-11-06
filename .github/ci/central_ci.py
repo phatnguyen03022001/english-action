@@ -46,6 +46,12 @@ class GitHub:
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return json.load(response)
+        except urllib.error.HTTPError as error:
+            # Method, allowlisted repository endpoint and HTTP code are metadata.
+            # Response bodies can contain private data and are never surfaced.
+            method = "GET" if payload is None else "POST"
+            endpoint = path.split("?", 1)[0]
+            raise Blocked(f"GitHub API {method} {endpoint}: HTTP {error.code}; response redacted") from None
         except (urllib.error.URLError, ValueError):
             # Never print API response bodies, private commit messages or tokens.
             raise Blocked("GitHub API unavailable or permission denied") from None
@@ -223,7 +229,8 @@ def run(api, repo, target, work):
                 # This also proves statuses:write before executing private code.
                 api.status(repo, sha, suite, "RUNNING", target["pin"])
                 outcome = verify(repo, sha, target, suite, api.token)
-            except Blocked:
+            except Blocked as error:
+                print(f"BLOCKED: {repo} {sha} {suite}; {error}", flush=True)
                 outcome = "BLOCKED"
             try:
                 api.status(repo, sha, suite, outcome, target["pin"])
@@ -259,8 +266,8 @@ def main():
         try:
             work = select_work(api, repo, target, manual_sha, creator)
             bad |= run(api, repo, target, work)
-        except Blocked:
-            print(f"BLOCKED: {repo}; access/history/results unavailable", flush=True)
+        except Blocked as error:
+            print(f"BLOCKED: {repo}; {error}", flush=True)
             bad = True
     return int(bad)
 

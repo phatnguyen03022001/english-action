@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -167,6 +168,18 @@ class HistoryTests(unittest.TestCase):
         self.assertIn("wf=" + "b" * 40, payload["description"])
         self.assertIn("pin=" + "c" * 40, payload["description"])
         self.assertTrue(payload["target_url"].endswith("/123"))
+
+    def test_http_denial_reports_endpoint_and_code_without_response_or_token(self):
+        api = ci.GitHub("credential-not-for-logs")
+        denied = urllib.error.HTTPError("https://api.github.com/private",
+                                       403, "private response text", {}, None)
+        with patch.object(ci.urllib.request, "urlopen", side_effect=denied):
+            with self.assertRaises(ci.Blocked) as raised:
+                api.request("/repos/owner/repository/commits/main")
+        message = str(raised.exception)
+        self.assertIn("GET /repos/owner/repository/commits/main: HTTP 403", message)
+        self.assertNotIn("private response text", message)
+        self.assertNotIn("credential-not-for-logs", message)
 
     def test_auth_missing_is_blocked(self):
         with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": ""}):
