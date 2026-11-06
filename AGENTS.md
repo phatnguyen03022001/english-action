@@ -35,7 +35,7 @@ apply. No external CI, worker service or new infrastructure is introduced.
   the legacy PAT prohibition below. The central GITHUB_TOKEN cannot substitute
   for this token. Never print, commit or pass it to private test processes.
 - Public logs and summaries contain only repository/SHA, workflow SHA, immutable
-  validator/engine pin, suite and redacted outcome. No private checkout, fixture,
+  validator/engine pin, suite, redacted outcome and numeric unittest totals/skips only. No private checkout, fixture,
   test output, generated drafts, logs or caches may be uploaded or committed.
   The runner scratch checkout is ephemeral. Private test processes receive no
   CI token or public workflow output-file environment variables.

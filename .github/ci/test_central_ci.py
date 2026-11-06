@@ -203,6 +203,24 @@ class IsolationTests(unittest.TestCase):
                 "import sys; print('private'); print('private', file=sys.stderr); sys.exit(1)"], Path(tmp)))
         self.assertEqual(output.getvalue(), "")
 
+
+    def test_unittest_counts_are_numeric_only_and_raw_diagnostics_stay_private(self):
+        script = ("import sys; print('private stdout'); "
+                  "print('private fixture and secret', file=sys.stderr); "
+                  "print('Ran 7 tests in 0.01s', file=sys.stderr); "
+                  "print('OK (skipped=2)', file=sys.stderr)")
+        counts = []
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertTrue(ci.command([sys.executable, "-c", script], Path(tmp),
+                                       test_counts=counts))
+        self.assertEqual(counts, [{"tests": 7, "skipped": 2}])
+        self.assertEqual(output.getvalue(), "")
+        # Zero-exit private commands without discovery evidence cannot claim tests.
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ci.Blocked, "summary unavailable"):
+                ci.command([sys.executable, "-c", "print('not tests')"], Path(tmp),
+                           test_counts=[])
+
     def test_suite_failure_cannot_be_masked_by_later_success(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.dict(os.environ, {"RUNNER_TEMP": tmp}), patch.object(ci, "checkout"), \

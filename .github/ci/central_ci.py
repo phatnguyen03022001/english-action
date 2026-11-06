@@ -140,12 +140,26 @@ def clean_env():
                             "GITHUB_STEP_SUMMARY", "GITHUB_STATE"}}
 
 
-def command(args, cwd, env=None, timeout=300):
+def command(args, cwd, env=None, timeout=300, *, test_counts=None):
     try:
-        result = subprocess.run(args, cwd=cwd, env=clean_env() if env is None else env,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, timeout=timeout,
-                                check=False)
+        # Only unittest's numeric terminal summary may leave private scratch.
+        # All stdout and the raw diagnostic bytes remain redacted.
+        with tempfile.TemporaryFile() as diagnostics:
+            result = subprocess.run(args, cwd=cwd, env=clean_env() if env is None else env,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=(diagnostics if test_counts is not None
+                                            else subprocess.DEVNULL),
+                                    timeout=timeout, check=False)
+            if test_counts is not None:
+                diagnostics.seek(0, os.SEEK_END)
+                diagnostics.seek(max(0, diagnostics.tell() - 4096))
+                tail = diagnostics.read()
+                totals = re.findall(rb"(?m)^Ran ([0-9]{1,12}) tests? in [0-9.]+s\r?$", tail)
+                if not totals:
+                    raise Blocked("Test discovery summary unavailable; details redacted")
+                skipped = re.findall(rb"skipped=([0-9]{1,12})", tail)
+                test_counts.append({"tests": int(totals[-1]),
+                                    "skipped": int(skipped[-1]) if skipped else 0})
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         raise Blocked("Command unavailable or timed out; details redacted") from None
@@ -203,7 +217,15 @@ def verify(repo, sha, target, suite, token):
         else:
             raise Blocked("Unknown suite")
         # Execute every check, preserving failure even if a subsequent check passes.
-        outcomes = [command(args, source, env=env) for args in commands]
+        counts = []
+        outcomes = [command(args, source, env=env,
+                            test_counts=counts if args[1:3] == ["-m", "unittest"] else None)
+                    for args in commands]
+        if counts:
+            print(json.dumps({"repository": f"{CONFIG['owner']}/{repo}",
+                              "source_sha": sha, "workflow_sha": os.environ["GITHUB_SHA"],
+                              "pin": target["pin"], "suite": suite,
+                              "test_counts": counts}, sort_keys=True), flush=True)
         return "PASS" if all(outcomes) else "FAIL"
 
 

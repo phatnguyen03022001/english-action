@@ -121,7 +121,7 @@ policy denial is NOT VERIFIED, never a synthetic PASS.
 Each suite uses an exact source checkout and a fresh venv with the specified
 public implementation. All command output is suppressed; only metadata and
 PASS/FAIL/BLOCKED leave scratch. The source commit's status links to the central
-run and records central workflow SHA plus implementation pin. Technical suite PASS
+run and records central workflow SHA plus implementation pin. Central unittest checks also emit numeric executed-test and skipped-test totals; raw private diagnostics remain redacted. Missing unittest discovery summaries block the check. Technical suite PASS
 does not promote generated content's NOT_VERIFIED editorial/rights state.
 Central tests use only synthetic/public fixtures.
 
