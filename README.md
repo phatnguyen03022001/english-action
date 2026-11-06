@@ -1,6 +1,6 @@
 # english-action
 
-**Current (TASK 07):** public Python Content Quality Engine, deterministic V1/V2 schema generation, regression tests and reusable GitHub-hosted CI. **Approved target (M1-A/M1-B):** production-parity Python engine, shareable test implementations, synthetic fixtures and reusable CI. Private english-content owns content/data, contracts/schemas, private quality evidence, editorial/rights decisions, confidential fixtures, revisioned publication and withdrawal. Private english owns pedagogy, learner assessment/progress and P1 direct database authoring-time AI drafts. Each private consumer retains its source, private tests, workflows/triggers, permissions, secrets, CI result and runner billing; a public workflow must not be used as a private-source CI proxy.
+**Current (TASK 07):** public Python Content Quality Engine, deterministic V1/V2 schema generation, regression tests and reusable GitHub-hosted CI. **Approved target (M1-A/M1-B):** production-parity Python engine, shareable test implementations, synthetic fixtures and reusable CI. Private english-content owns content/data, contracts/schemas, private quality evidence, editorial/rights decisions, confidential fixtures, revisioned publication and withdrawal. Private english owns pedagogy, learner assessment/progress and P1 direct database authoring-time AI drafts. R04-02 moves workflow ownership and execution here; private consumers retain source, private tests, schemas and product authority. The central migration and credential/cutover requirements below supersede historical private-caller execution descriptions.
 
 ## Repository guidance
 
@@ -17,7 +17,7 @@
 
 ## Current status
 
-The private [english-content consumer at Python-only cutover](https://github.com/phatnguyen03022001/english-content/commit/79e7e1c74d98f6a4b57c9d9b75f3bb25d06048b5) invokes the pinned Python Engine for schema/candidate commands and Python historical/private regressions. Node/Ajv is no longer its runtime or CI dependency; retired Node source/tests remain recoverable in Git history, not as an active fallback. **Real publication stays disabled** without independently authenticated appointments, evidence, rights and editorial authority. The public repository neither executes private datasets nor proxies private CI billing.
+The private [english-content consumer at Python-only cutover](https://github.com/phatnguyen03022001/english-content/commit/79e7e1c74d98f6a4b57c9d9b75f3bb25d06048b5) invokes the pinned Python Engine for schema/candidate commands and Python historical/private regressions. Node/Ajv is no longer its runtime or CI dependency; retired Node source/tests remain recoverable in Git history, not as an active fallback. **Real publication stays disabled** without independently authenticated appointments, evidence, rights and editorial authority. R04-02 permits bounded ephemeral private verification with redacted outcomes; it makes no claim about private-source billing exemptions.
 
 
 ## Approved target versus current implementation
@@ -26,7 +26,7 @@ The private [english-content consumer at Python-only cutover](https://github.com
 - **Status:** TASK 07 moved schema/candidate ownership to pinned Python; the subsequent private cutover preserved historical QA in Python and retired Node executable code/tests. Existing historical Node/parity evidence is retained. This consumer cutover does not remove a public engine API/CLI or prove a live producer, learner-app integration or publication approval.
 - **Safety:** public or synthetic fixture data only; never expose private evidence, proprietary content, customer/learner data, credentials or confidential tests in public code, logs, caches, artifacts or issues. Content-quality PASS does not approve editorial claims, distribution rights, learner scoring or release.
 - **Identity and policy:** preserve lexical prefixed UUIDv7 with revision CAS/history, consumer prefixed UUIDv4 as a different namespace, versioned dependency-closed and fail-closed use eligibility, correction and withdrawal. Follow INV-01–INV-06, including P0 runtime AI Assessment OFF.
-- **Execution/storage:** GitHub-first Mac-independent work, hosted GitHub Actions CI in the private caller and no mandatory Factory MongoDB. Initial Google Drive media storage with migration capability is an unimplemented target, **not a commercial media/voice license**. No autonomous AI worker is implied by a CI runner.
+- **Execution/storage:** GitHub-first Mac-independent work, hosted GitHub Actions CI with central ownership under R04-02 and no mandatory Factory MongoDB. Initial Google Drive media storage with migration capability is an unimplemented target, **not a commercial media/voice license**. No autonomous AI worker is implied by a CI runner.
 
 
 ## TASK 08 — Foundation P0-a Spawn Engine (draft-only)
@@ -48,7 +48,7 @@ python -m english_action.spawn \
   --provider synthetic --concurrency 3 --timeout 15 --retries 1
 ```
 
-Private CI runs this against a full-SHA-pinned public engine, verifies synthetic WAV fixture hashes, tests all seven positive and negative producer shapes, checks replay, and uploads a versioned **private, 7-day-retained synthetic draft artifact**. This is test storage, not an approved durable production draft database or Google Drive upload. Real audio pronunciation, media storage integration, independent linguistic evidence, rights and owner-appointed editorial review are **NOT VERIFIED**; every candidate remains HOLD and public release stays disabled. The producer never scores learners or calls the english app.
+The migrated Spawn gate runs this against a full-SHA-pinned public engine, verifies synthetic WAV fixture hashes, tests all seven positive and negative producer shapes, checks replay, and checks the versioned synthetic draft in ephemeral runner scratch. The former private 7-day artifact upload is intentionally excluded from central public runs; no private draft is uploaded. This is test storage, not an approved durable production draft database or Google Drive upload. Real audio pronunciation, media storage integration, independent linguistic evidence, rights and owner-appointed editorial review are **NOT VERIFIED**; every candidate remains HOLD and public release stays disabled. The producer never scores learners or calls the english app.
 
 ## Gate 2 specification and documentation validator
 
@@ -73,3 +73,93 @@ jobs:
 ```
 
 The reusable workflow checks out the calling repository's triggering `github.sha`, checks out the public validator at `validator_sha`, verifies both SHAs and runs validation in the **private caller's** GitHub Actions run. No secrets inheritance, PAT, artifact upload or private-source proxy in the public repository. Public CI runs only synthetic fixtures; validation against a private checkout is read-only and separate from private CI integration. Roll back by restoring both caller pins to the previously accepted SHA. The public repository cannot silently alter a pinned consumer.
+
+## Central private repository CI (R04-02)
+
+Implementation is staged in [central-private-ci.yml](.github/workflows/central-private-ci.yml)
+and [.github/ci](.github/ci/central_ci.py). **Cutover is not complete until the
+GitHub App works, each central source check succeeds, the three old private
+workflows are deleted, and their deletion commits pass central verification.**
+Existing reusable workflows remain compatible; historical caller guidance below
+describes the previous execution model.
+
+### Credential configuration
+
+In this repository's Actions settings, configure:
+
+| Setting | Value |
+| --- | --- |
+| Actions variable CI_APP_CLIENT_ID | Client ID of the Owner's GitHub App |
+| Actions secret CI_APP_PRIVATE_KEY | The App's PEM private key |
+| App installation repositories | Exactly english and english-content |
+| App repository permissions | Contents: read; Commit statuses: write (Metadata read is implicit) |
+
+Do not send the key/token in chat, write it to Git, or assume the connector's
+GitHub App is a runner credential. The workflow mints/revokes a narrowly scoped
+installation token using a full-SHA-pinned official action. A missing setting
+fails explicitly as BLOCKED. Access and status-write are verified by actual
+requests before any private test execution. Runner/billing/policy denial is
+NOT VERIFIED, never a synthetic PASS.
+
+### Commands and attribution
+
+| Source | Immutable implementation pin | Central check context | Preserved checks |
+| --- | --- | --- | --- |
+| english | 1df0657a7e080738d6e09461d3c85fdaa5675783 | central-ci/spec-validation | Existing Gate 2 validator |
+| english-content | 4c9ed747bc03479c70432f8901b9158c1bed1f29 | central-ci/content-quality | Schema byte equality, public engine regressions, private historical/consumer regressions |
+| english-content | Same engine pin | central-ci/spawn-draft | Public Spawn regressions; seven recipes; synthetic WAV hashes; draft/HOLD and rights gates; replay/conflict; negative contracts and media mismatch |
+
+Each suite uses an exact source checkout and a fresh venv with the specified
+public implementation. All command output is suppressed; only metadata and
+PASS/FAIL/BLOCKED leave scratch. The source commit's status links to the central
+run and records central workflow SHA plus implementation pin. Technical suite PASS
+does not promote generated content's NOT_VERIFIED editorial/rights state.
+Central tests use only synthetic/public fixtures.
+
+### Catch-up and manual recovery
+
+- Schedule: minute 17 and 47 each hour. GitHub may delay/drop scheduled runs.
+  Existing public push CI also calls this workflow after central contract tests;
+  routine source discovery needs no workflow in either private repository.
+- The migration baselines and pins live in [targets.json](.github/ci/targets.json).
+  Discovery compares each baseline to a single immutable main snapshot, paginates
+  the complete history and includes the baseline. It never uses a latest-only
+  cursor, timestamp or cache as proof of completed checks.
+- Every source commit is checked, including documentation-only commits. Each
+  invocation takes at most three oldest incomplete SHAs per repository. Newer
+  success cannot cover a missing older result. Pending/error, missing contexts,
+  foreign status authors and wrong pins are retried; failure remains a failure
+  on its own SHA. A BLOCKED result stops advancement within that repository.
+- Open **Actions → Central Private Repository CI → Run workflow** on main.
+  Choose all and leave SHA empty to catch up; or choose exactly english or
+  english-content with a full lowercase 40-character SHA to force rerun.
+  Manual SHA must be on main at/after the migration baseline.
+- Cancellation/runner loss leaves pending/missing status and is recovered by the
+  next invocation. A test failure remains red on its own SHA and can be rerun
+  manually. BLOCKED maps to status error; skipped/unrun suites never map to success.
+  A green no-work central run does not erase earlier failed source statuses.
+- Statuses are the durable per-SHA ledger. A 1000-page API safety bound fails
+  closed without discarding history. Each command has a 5-minute timeout;
+  the central job is bounded to 45 minutes. No concurrency cancellation group,
+  source mutation, external service, artifact or private cache is used.
+
+### Cutover and rollback
+
+After credential configuration, verify the baseline sources centrally, including
+actual statuses on all three contexts. Exercise manual rerun and compare its
+source/workflow/pin metadata; synthetic tests cover dropped-commit recovery,
+pagination, failure attribution and setup denial. Only then delete
+english/.github/workflows/spec-validation.yml and both
+english-content/.github/workflows/{schema-conformance,spawn-draft}.yml;
+update their CI ownership guidance and verify each resulting exact SHA centrally.
+A recursive tree check must show zero files under both private
+.github/workflows/ directories.
+
+Rollback restores the old workflow files from their recorded migration baselines
+using a new main commit (never a reset/force-push); retain the immutable pins.
+The old reusable APIs remain available. Pending credentials or a failed central
+integration is an unfinished migration, not permission to remove working checks.
+
+Official references: [GitHub scheduled/manual triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows),
+[GitHub App token action](https://github.com/actions/create-github-app-token),
+[commit status API](https://docs.github.com/en/rest/commits/statuses).

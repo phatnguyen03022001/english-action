@@ -1,0 +1,21 @@
+{
+  "owner": "phatnguyen03022001",
+  "batch_size": 3,
+  "targets": {
+    "english": {
+      "baseline": "01294903475ca8b27ad62fadd4ffd715e68892ff",
+      "pin": "1df0657a7e080738d6e09461d3c85fdaa5675783",
+      "suites": [
+        "spec-validation"
+      ]
+    },
+    "english-content": {
+      "baseline": "31e59e02e74d232e6606b33a991d28517d7cf271",
+      "pin": "4c9ed747bc03479c70432f8901b9158c1bed1f29",
+      "suites": [
+        "content-quality",
+        "spawn-draft"
+      ]
+    }
+  }
+}

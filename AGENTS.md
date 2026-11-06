@@ -13,7 +13,40 @@ Do not copy private source, private test fixtures, credentials, proprietary cont
 
 **Bounded quality domain (D1–D6, INV-01–INV-06):** the first producer slice covers exactly Foundation P0-a N1-01, N2-06, N3-11, K1-16, K1-17, K2-21 and N2-10; P0-b is deferred without cancellation. The Engine validates linguistic/semantic/content correctness, schema, dependency completeness, authenticated claim-specific evidence and rights for the private producer; it does **not** approve publication, set pedagogy, score learners, access private Account records or change the English product invariants. Lexical prefixed UUIDv7, revision CAS/append-only history, versioned dependency-closed eligibility and withdrawal must be preserved. Application prefixed UUIDv4 identities are separate. GitHub-first Mac-independent operation needs no Factory MongoDB; GitHub Actions is CI, not automatically an AI worker. Google Drive initial media storage with migration capability is a *target*, not an existing integration or rights grant. P1 direct database persistence of editorial AI drafts remains an english product obligation.
 
-## GitHub Actions execution boundary
+## R04-02 — Central GitHub Actions ownership
+
+Human Owner authorizes central execution in this repository for exactly
+english and english-content, superseding the legacy private-caller/proxy
+restrictions below for this bounded migration. This is an ownership decision,
+not a claim about private-repository billing discounts. Central runs consume this
+repository's GitHub-hosted runner allocation; GitHub allowances and policies still
+apply. No external CI, worker service or new infrastructure is introduced.
+
+- All workflow definitions and orchestration belong here. Legacy reusable
+  interfaces remain compatible for rollback; the two private repositories retain
+  source, private fixtures, schemas and product/publication authority.
+- Central execution uses schedule plus manual full-SHA dispatch. The existing public
+  push CI calls the central workflow after its contract tests for bootstrap and
+  ongoing central-change verification. No cross-commit cancellation group.
+- Read both private repositories only through an explicitly configured GitHub App,
+  scoped to Contents read and Commit statuses write. The central GITHUB_TOKEN
+  cannot substitute for that installation token. Never print/store a private key.
+- Public logs and summaries contain only repository/SHA, workflow SHA, immutable
+  validator/engine pin, suite and redacted outcome. No private checkout, fixture,
+  test output, generated drafts, logs or caches may be uploaded or committed.
+  The runner scratch checkout is ephemeral. Private test processes receive no
+  installation token or public workflow output-file environment variables.
+- Preserve existing pinned validators, commands, negative/replay/media checks and
+  fail-closed publication. CI PASS is only the technical suite result; generated
+  content stays HOLD with rights/editorial NOT VERIFIED.
+- Keep old private workflows until real central verification/status attribution
+  succeeds. Then remove them and verify central checks on each exact cutover SHA.
+  A credential/setup/permission failure is BLOCKED, never PASS or completed migration.
+- Do not change branch rules, Actions settings, visibility, credentials or billing
+  as a side effect. Owner credential configuration is a separate manual operation
+  when the current connector has no secrets/variables administration capability.
+
+## Legacy reusable workflow execution boundary
 
 - Prefer **reusable workflows** (`on: workflow_call`) published here and invoked **from each private consumer repository** using `jobs.<job_id>.uses`. A caller can use public reusable workflows; the caller owns the run, runner allocation, permissions, and billing.
 - Follow GitHub's [reusable workflow configuration](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations) and [dependency caching](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching) guidance.
