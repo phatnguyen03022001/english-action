@@ -29,7 +29,7 @@ REQUIRED = {
     "N2-06": ("context", "prompt", "key", "alternatives", "rationale"),
     "N3-11": ("phonemes", "labels", "assets", "key"),
     "K1-16": ("transcript", "acceptedForms", "audio"),
-    "K1-17": ("passage", "question", "mainIdea", "answerKey", "audio"),
+    "K1-17": ("passage", "question", "mainIdea", "alternatives", "answerKey", "rationale", "audio"),
     "K2-21": ("passage", "question", "mainIdea", "alternatives", "answerKey"),
     "N2-10": ("context", "tokens", "acceptedOrderings", "constraints", "explanation"),
 }
@@ -104,7 +104,10 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
                 or not _asset(payload["audio"]) or payload["audio"]["mediaType"] != "audio"):
             errors.append("DICTATION_ALIGNMENT_NOT_VERIFIED")
     elif recipe == "K1-17":
-        if (not all(_text(payload[k]) for k in ("passage", "question", "mainIdea", "answerKey"))
+        if (not all(_text(payload[k]) for k in ("passage", "question", "mainIdea", "answerKey", "rationale"))
+                or not _texts(payload["alternatives"], minimum=2)
+                or len(set(payload["alternatives"])) != len(payload["alternatives"])
+                or payload["answerKey"] not in payload["alternatives"]
                 or not _asset(payload["audio"]) or payload["audio"]["mediaType"] != "audio"):
             errors.append("GIST_CONTENT_INVALID")
     elif recipe == "K2-21":

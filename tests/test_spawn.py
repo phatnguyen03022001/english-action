@@ -31,7 +31,9 @@ def good(recipe):
                   "assets": [ASSET_A, ASSET_B], "key": "ship"},
         "K1-16": {"transcript": "Example sentence", "acceptedForms": ["Example sentence"], "audio": ASSET_A},
         "K1-17": {"passage": "A short synthetic listening passage", "question": "What is the main idea?",
-                  "mainIdea": "A synthetic point", "answerKey": "A synthetic point", "audio": ASSET_A},
+                  "mainIdea": "A synthetic point", "alternatives": ["A synthetic point", "A different point"],
+                  "answerKey": "A synthetic point", "rationale": "Unreviewed synthetic choice rationale",
+                  "audio": ASSET_A},
         "K2-21": {"passage": "A short synthetic reading passage", "question": "Main idea?",
                   "mainIdea": "A synthetic point", "alternatives": ["A synthetic point", "A different point"],
                   "answerKey": "A synthetic point"},
@@ -80,6 +82,39 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
                 item = (await generate(batch([s]), SyntheticWorker()))[0]
                 self.assertEqual(item["status"], "REJECTED")
                 self.assertTrue(item["issues"])
+
+    async def test_k117_choice_structure_rejects_incomplete_options(self):
+        valid = good("K1-17")
+        self.assertEqual(validate_content("K1-17", valid), [])
+        accepted = (await generate(batch([seed("K1-17")]), SyntheticWorker()))[0]
+        self.assertEqual(accepted["status"], "HOLD")
+        self.assertEqual(accepted["rights"]["clearance"], "UNVERIFIED")
+        self.assertEqual(accepted["rights"]["authenticatedEvidence"], [])
+        self.assertEqual(accepted["content"]["audio"]["rightsStatus"], "unknown")
+        self.assertEqual(accepted["generatedContentQuality"]["checks"]["editorialCorrectness"], "NOT_VERIFIED")
+
+        invalid = {
+            "legacy_five_fields": {k: v for k, v in valid.items() if k not in ("alternatives", "rationale")},
+            "missing_options": {k: v for k, v in valid.items() if k != "alternatives"},
+            "missing_rationale": {k: v for k, v in valid.items() if k != "rationale"},
+            "empty_options": {**valid, "alternatives": []},
+            "one_option": {**valid, "alternatives": [valid["answerKey"]]},
+            "duplicate_options": {**valid, "alternatives": [valid["answerKey"], valid["answerKey"]]},
+            "blank_option": {**valid, "alternatives": [valid["answerKey"], " "]},
+            "non_string_option": {**valid, "alternatives": [valid["answerKey"], 7]},
+            "non_list_options": {**valid, "alternatives": "not a list"},
+            "key_not_displayed": {**valid, "answerKey": "not displayed"},
+            "blank_rationale": {**valid, "rationale": " "},
+            "undeclared_field": {**valid, "unsupported": "text"},
+        }
+        for name, content in invalid.items():
+            with self.subTest(case=name):
+                self.assertTrue(validate_content("K1-17", content))
+                sample = seed("K1-17")
+                sample["fixture"] = content
+                rejected = (await generate(batch([sample]), SyntheticWorker()))[0]
+                self.assertEqual(rejected["status"], "REJECTED")
+                self.assertEqual(rejected["generatedContentQuality"]["checks"]["recipeContent"], "FAIL")
 
     async def test_bounded_fanout_and_isolated_retry(self):
         class Flaky:
