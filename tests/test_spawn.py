@@ -1,7 +1,8 @@
 """Public synthetic-only tests for the P0-a draft-only producer."""
 import asyncio
 from contextlib import redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
+import wave
 from hashlib import sha256
 from copy import deepcopy
 import json
@@ -172,7 +173,11 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             media = root / "audio.wav"
-            media.write_bytes(b"synthetic-only-wave-test-data")
+            buffer = BytesIO()
+            with wave.open(buffer, "wb") as audio:
+                audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+                audio.writeframes(b"\x01\x00" * 80)
+            media.write_bytes(buffer.getvalue())
             fixture = seed("K1-16")
             asset = fixture["fixture"]["audio"]
             asset["sha256"] = sha256(media.read_bytes()).hexdigest()

@@ -19,6 +19,32 @@ Generator media-rights labels appear only as untrusted claims in `rights.generat
 
 The Python implementation includes V1/V2 registry schemas, lexical and lifecycle graph validation, claim-specific evidence and rights checks, editorial eligibility, versioned draft operations, V1 representation migration and eight-axis Golden QA. Public tests use synthetic fixtures only. English-content executes its own private parity and historical QA tests in its private runner.
 
+## Pre-generated media verification
+
+Spawn's existing local-media check also rejects malformed/truncated PCM WAV,
+digital silence and unsafe static SVG even when the supplied hash matches.
+Only WAV and a narrow static SVG profile have byte-level decoders here; other
+encodings still need suitable decoding/playback review. Non-silent bytes do not
+prove speech, pronunciation, intelligibility, factual image correctness or rights.
+
+`media_binding(assets, source, configuration)` fingerprints the existing asset
+identities/revisions/checksums, accessibility, exact source/content revisions,
+objective/construct, text/key/order snapshot, resolved dependency IDs and actual
+voice/language/render configuration. Unknown configuration remains null.
+Storage/locator/rights labels are excluded from the alignment fingerprint.
+Callers retain their existing private evidence records; no asset registry exists.
+
+`verify_media(..., reviewed_binding=..., findings=..., rights_status=...,
+withdrawn=...)` is a read-only HOLD/revalidation report. It reuses local integrity
+checks, detects stale binding and scoped source/asset withdrawal, and records
+reported defects. Callers must supply the complete resolved dependency closure;
+the helper does not crawl sources, authenticate a review, discover revocation or
+grant rights. Even a matching binding and a claimed "cleared" label leave actual
+content, rights and editorial authority unverified. No positive publication or new
+use is granted. Compatible bytes can be retained pending those gates, without a
+generator call; changed dependencies require scoped revalidation, not batch
+regeneration. The function never mutates assets, source, ledger or old evidence.
+
 ## Two independent safety gates
 
 **Technical engine use:** TASK 07 switched English-content's nine then-npm schema/candidate entrypoints to an immutable public Engine SHA after positive/negative CI, stress, private integration and rollback checks. The [subsequent Python-only consumer cutover](https://github.com/phatnguyen03022001/english-content/commit/79e7e1c74d98f6a4b57c9d9b75f3bb25d06048b5) preserved historical QA in Python and retired Node implementation/tests; original Node/parity evidence and retired source remain in Git history. There is no active consumer Node fallback, and no public capability/API is removed by that consumer migration. Never use the public workflow to process private source or pay for a private consumer run.

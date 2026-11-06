@@ -5,6 +5,10 @@ import argparse
 import asyncio
 from copy import deepcopy
 from hashlib import sha256
+from io import BytesIO
+import math
+import wave
+import xml.etree.ElementTree as ET
 import json
 import os
 from pathlib import Path
@@ -162,11 +166,144 @@ def _media_issues(assets: list[dict], root: Path) -> list[str]:
             resolved = path.resolve(strict=True)
             if not resolved.is_relative_to(root) or not resolved.is_file():
                 raise ValueError("unsafe")
-            if sha256(resolved.read_bytes()).hexdigest() != asset["sha256"]:
+            data = resolved.read_bytes()
+            if sha256(data).hexdigest() != asset["sha256"]:
                 errors.append("MEDIA_HASH_MISMATCH")
+            else:
+                errors.extend(_media_bytes_issues(data, resolved.suffix.lower()))
         except (OSError, ValueError):
             errors.append("MEDIA_NOT_AVAILABLE")
     return errors
+
+
+def _media_bytes_issues(data: bytes, suffix: str) -> list[str]:
+    """Decode WAV/static SVG fixtures, never certify speech or visual meaning."""
+    if suffix == ".wav" or data.startswith(b"RIFF"):
+        try:
+            if (len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE"
+                    or int.from_bytes(data[4:8], "little") + 8 != len(data)):
+                return ["AUDIO_BYTES_INVALID"]
+            with wave.open(BytesIO(data), "rb") as audio:
+                frames = audio.readframes(audio.getnframes())
+                expected = audio.getnframes() * audio.getnchannels() * audio.getsampwidth()
+                if not frames or len(frames) != expected:
+                    return ["AUDIO_BYTES_INVALID"]
+                silence = 128 if audio.getsampwidth() == 1 else 0
+                if all(value == silence for value in frames):
+                    return ["AUDIO_SILENT"]
+        except (wave.Error, EOFError, ValueError):
+            return ["AUDIO_BYTES_INVALID"]
+    elif suffix == ".svg" or data.lstrip().startswith(b"<svg"):
+        # Narrow static graphics profile. No browser, network or code.
+        tags = {"svg", "g", "title", "desc", "rect", "line", "text",
+                "path", "polyline", "polygon", "circle", "ellipse"}
+        attributes = {"id", "role", "aria-labelledby", "viewBox", "width", "height",
+                      "x", "y", "x1", "x2", "y1", "y2", "cx", "cy", "r", "rx", "ry",
+                      "d", "points", "fill", "stroke", "stroke-width", "font-size",
+                      "text-anchor"}
+        try:
+            if b"<!" in data or b"<?" in data:
+                return ["SVG_UNSAFE"]
+            tree = ET.fromstring(data)
+            if tree.tag != "{http://www.w3.org/2000/svg}svg":
+                return ["IMAGE_BYTES_INVALID"]
+            for node in tree.iter():
+                if (not node.tag.startswith("{http://www.w3.org/2000/svg}")
+                        or node.tag.split("}", 1)[-1] not in tags
+                        or set(node.attrib) - attributes
+                        or any("url" in value.lower() or "://" in value
+                               for value in node.attrib.values())):
+                    return ["SVG_UNSAFE"]
+            width, height = float(tree.attrib["width"]), float(tree.attrib["height"])
+            if not all(math.isfinite(v) and 0 < v <= 10000 for v in (width, height)):
+                return ["IMAGE_DIMENSIONS_INVALID"]
+        except (ET.ParseError, KeyError, ValueError, UnicodeError):
+            return ["IMAGE_BYTES_INVALID"]
+    # Other encodings need their own decoder/actual-output review. A hash may
+    # still prove byte identity; it cannot prove an unsupported file works.
+    return []
+
+
+def media_binding(assets: list[dict], source: dict, configuration: dict) -> str:
+    """Fingerprint exact source/key/order/construct and generation dependencies.
+
+    source is an evidence projection, not a second candidate or asset registry.
+    Pass exact content minus embedded assets; retain immutable source/content
+    revisions, objective/construct and resolved dependency references.
+    Locator/storage/rights labels do not change media bytes. Accessibility does
+    require revalidation. Configuration records actual voice/language/render
+    settings, with null for facts that are not available.
+    """
+    if (not isinstance(assets, list) or not assets or not all(_asset(a) for a in assets)
+            or not isinstance(source, dict) or not isinstance(configuration, dict)
+            or not all(k in source for k in ("sourceRef", "sourceRevision", "contentRevision",
+                                            "objective", "construct", "content", "dependencies"))
+            or not _text(source["sourceRef"])
+            or any(type(source[k]) is not int or source[k] < 1
+                   for k in ("sourceRevision", "contentRevision"))
+            or not _text(source["objective"]) or not _text(source["construct"])
+            or not isinstance(source["content"], dict) or not source["content"]
+            or not _texts(source["dependencies"], minimum=0)):
+        raise ValueError("MEDIA_BINDING_INPUT_INVALID")
+    identities = [{k: v for k, v in asset.items()
+                   if k not in {"locator", "storage", "rightsStatus"}} for asset in assets]
+    return _hash({"source": source, "assets": identities, "configuration": configuration})
+
+
+def verify_media(assets: list[dict], source: dict, configuration: dict,
+                 media_root: str, *, reviewed_binding: str | None = None,
+                 findings: tuple[str, ...] = (), rights_status: str = "unknown",
+                 withdrawn: tuple[str, ...] = ()) -> dict:
+    """Read-only denial/revalidation aid; never authenticates reviews or grants use.
+
+    Findings are reported observations, not independently authenticated verdicts.
+    A matching binding means only the dependency snapshot matches.
+    Existing external rights/editorial/publication gates remain mandatory.
+    withdrawn contains resolved source/asset dependency IDs, including transitive
+    IDs in source.dependencies; this function does not discover remote references.
+    """
+    checks = {"integrity": "NOT_VERIFIED", "dependencyBinding": "NOT_VERIFIED",
+              "actualContent": "NOT_VERIFIED", "rightsClearance": "NOT_VERIFIED",
+              "editorialAuthorization": "NOT_VERIFIED"}
+    issues = []
+    current = None
+    try:
+        current = media_binding(assets, source, configuration)
+    except (ValueError, TypeError):
+        issues.append("MEDIA_BINDING_INPUT_INVALID")
+    if current:
+        if reviewed_binding is not None:
+            checks["dependencyBinding"] = "PASS" if current == reviewed_binding else "FAIL"
+            if current != reviewed_binding:
+                issues.append("MEDIA_BINDING_STALE")
+        try:
+            root = Path(media_root).resolve(strict=True)
+            local = [a for a in assets if a["storage"] == "local-fixture"]
+            errors = _media_issues(local, root)
+            issues.extend(errors)
+            checks["integrity"] = ("FAIL" if errors else
+                                   "PASS" if len(local) == len(assets) else "NOT_VERIFIED")
+        except (OSError, ValueError, TypeError):
+            issues.append("MEDIA_NOT_AVAILABLE")
+            checks["integrity"] = "FAIL"
+        dependencies = {source["sourceRef"], *source["dependencies"],
+                        *(a["logicalId"] for a in assets)}
+        if dependencies.intersection(withdrawn):
+            issues.append("MEDIA_DEPENDENCY_WITHDRAWN")
+    if findings:
+        checks["actualContent"] = "FAIL"
+        issues.append("MEDIA_REPORTED_CONTENT_DEFECT")
+    if rights_status in {"revoked", "expired", "insufficient", "reference_only",
+                         "permission_required"}:
+        checks["rightsClearance"] = "FAIL"
+        issues.append("MEDIA_RIGHTS_DENIED")
+    return {"status": "HOLD", "publicationEligible": False, "newUseAllowed": False,
+            "binding": current, "checks": checks, "issues": sorted(set(issues)),
+            "reportedFindings": list(findings),
+            "assetAction": ("REUSE_BYTES_PENDING_GATES"
+                            if checks["dependencyBinding"] == "PASS"
+                            and checks["integrity"] == "PASS" and not issues
+                            else "REVALIDATE_AFFECTED_DEPENDENCIES")}
 
 
 def load_contract(path: str) -> Draft202012Validator:
