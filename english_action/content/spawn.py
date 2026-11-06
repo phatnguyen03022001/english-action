@@ -170,15 +170,17 @@ def _media_issues(assets: list[dict], root: Path) -> list[str]:
             if sha256(data).hexdigest() != asset["sha256"]:
                 errors.append("MEDIA_HASH_MISMATCH")
             else:
-                errors.extend(_media_bytes_issues(data, resolved.suffix.lower()))
+                errors.extend(_media_bytes_issues(data, resolved.suffix.lower(), asset["mediaType"]))
         except (OSError, ValueError):
             errors.append("MEDIA_NOT_AVAILABLE")
     return errors
 
 
-def _media_bytes_issues(data: bytes, suffix: str) -> list[str]:
+def _media_bytes_issues(data: bytes, suffix: str, media_type: str) -> list[str]:
     """Decode WAV/static SVG fixtures, never certify speech or visual meaning."""
     if suffix == ".wav" or data.startswith(b"RIFF"):
+        if media_type != "audio":
+            return ["MEDIA_TYPE_MISMATCH"]
         try:
             if (len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE"
                     or int.from_bytes(data[4:8], "little") + 8 != len(data)):
@@ -194,6 +196,8 @@ def _media_bytes_issues(data: bytes, suffix: str) -> list[str]:
         except (wave.Error, EOFError, ValueError):
             return ["AUDIO_BYTES_INVALID"]
     elif suffix == ".svg" or data.lstrip().startswith(b"<svg"):
+        if media_type != "image":
+            return ["MEDIA_TYPE_MISMATCH"]
         # Narrow static graphics profile. No browser, network or code.
         tags = {"svg", "g", "title", "desc", "rect", "line", "text",
                 "path", "polyline", "polygon", "circle", "ellipse"}

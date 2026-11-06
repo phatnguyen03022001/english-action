@@ -151,6 +151,23 @@ class MediaVerificationTests(unittest.TestCase):
             path.write_bytes(data)
             self.assertTrue(_media_issues([asset(data, "image.svg", "image")], self.root))
 
+
+    def test_recognized_bytes_must_match_declared_modality_even_with_valid_hash(self):
+        for data, locator, wrong_kind in ((SVG, "image.svg", "audio"),
+                                         (self.data, "sample.wav", "image"),
+                                         (SVG, "image.bin", "audio"),
+                                         (self.data, "sample.bin", "image")):
+            with self.subTest(locator=locator, wrong_kind=wrong_kind):
+                (self.root / locator).write_bytes(data)
+                self.assets = [asset(data, locator, wrong_kind)]
+                binding = media_binding(self.assets, self.source, self.configuration)
+                report = self.verify(reviewed_binding=binding)
+                self.assertIn("MEDIA_TYPE_MISMATCH", report["issues"])
+                self.assertEqual(report["checks"]["integrity"], "FAIL")
+                self.assertEqual(report["assetAction"], "REVALIDATE_AFFECTED_DEPENDENCIES")
+                self.assertFalse(report["publicationEligible"])
+                self.assertFalse(report["newUseAllowed"])
+
     def test_unknown_decoder_remote_asset_and_malformed_evidence_cannot_grant_use(self):
         self.assets[0]["storage"] = "remote-reference"
         report = self.verify()
