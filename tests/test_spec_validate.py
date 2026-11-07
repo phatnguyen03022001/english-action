@@ -398,6 +398,76 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--root", result.stderr)
 
+    def _synthetic_product_locks(self) -> None:
+        inventory = (self.root / "docs/product/capabilities.md").read_text(encoding="utf-8")
+        self.document("knowledge/product/capability-map.md", inventory)
+        (self.root / "docs/product/capabilities.md").unlink()
+        self.document("knowledge/product/decisions.md",
+                      "# Decisions\n\n"
+                      "### INV-02 — Published media\n"
+                      "Speech only by `edge-tts`; Local AI Agents never synthesize speech in CI. "
+                      "Images permit static PNG/SVG.\n\n"
+                      "### INV-03 — Assessment\n"
+                      "Deterministic evaluation is the default. "
+                      "P0 runtime AI Assessment is OFF; "
+                      "P1 AI Assessment remains conditional.\n\n"
+                      "### ASSESSMENT-LOCK-01 — Runtime prohibition\n"
+                      "Realtime AI is **FORBIDDEN**. Use pre-generated question bank, "
+                      "explicit submission, IELTS Speaking fixed sequence and evaluation "
+                      "after submission. A transcript is **not** evidence of pronunciation.\n")
+        self.document("knowledge/features/assessment/scoring/spec.md",
+                      "# Scoring\n\n## 3. IELTS scoring\n"
+                      "IELTS versioned policy.\n## 4. TOEIC scoring\n"
+                      "TOEIC versioned policy.\n## 5. PTE Academic scoring\n"
+                      "PTE Academic versioned policy.\n## 6. PTE Core scoring\n"
+                      "PTE Core versioned policy.\n")
+
+    def test_canonical_product_locks_accept_approved_markers_and_historical_quotes(self) -> None:
+        self._synthetic_product_locks()
+        path = self.root / "knowledge/product/decisions.md"
+        path.write_text(path.read_text(encoding="utf-8") +
+                        "\nHistorical quotation: browser speech was once permitted.\n",
+                        encoding="utf-8")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_missing_speech_generator_lock_fails_without_keyword_ban(self) -> None:
+        self._synthetic_product_locks()
+        path = self.root / "knowledge/product/decisions.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "only by `edge-tts`", "using an arbitrary TTS engine"), encoding="utf-8")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ERROR CANONICAL_LOCK_DRIFT:", result.stdout)
+
+    def test_missing_post_submission_lock_fails(self) -> None:
+        self._synthetic_product_locks()
+        path = self.root / "knowledge/product/decisions.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "after submission", "between speaking questions"), encoding="utf-8")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ERROR CANONICAL_LOCK_DRIFT:", result.stdout)
+
+    def test_missing_distinct_pte_core_scoring_section_fails(self) -> None:
+        self._synthetic_product_locks()
+        path = self.root / "knowledge/features/assessment/scoring/spec.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "## 6. PTE Core scoring", "## 6. Shared scoring"), encoding="utf-8")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ERROR SCORING_CONTRACT_MISSING:", result.stdout)
+
+    def test_missing_assessment_lock_heading_fails(self) -> None:
+        self._synthetic_product_locks()
+        path = self.root / "knowledge/product/decisions.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "### ASSESSMENT-LOCK-01", "### Legacy runtime discussion"), encoding="utf-8")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ERROR CANONICAL_LOCK_MISSING:", result.stdout)
+
+
 
 if __name__ == "__main__":
     unittest.main()

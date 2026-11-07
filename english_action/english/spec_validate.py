@@ -498,6 +498,50 @@ class Validator:
             return
         self.warnings.append(Issue(rel.as_posix(), 1, code, message))
 
+    def product_contract_locks(self) -> None:
+        """Guard narrow canonical decisions, not arbitrary prose or historical quotes.
+
+        This asserts declared owner markers and distinct exam scoring ownership;
+        structural PASS cannot establish semantic consistency or release readiness.
+        """
+        path = self.root / "knowledge/product/decisions.md"
+        if not path.is_file():
+            return  # Synthetic/legacy Spec Kit callers have no product decision file.
+        lines = self.read(path)
+        if lines is None:
+            return
+        required = {
+            "INV-02": ("only by `edge-tts`", "local ai agents",
+                       "never synthesize speech", "static png/svg"),
+            "INV-03": ("deterministic evaluation is the default",
+                       "p0 runtime ai assessment is off",
+                       "p1 ai assessment remains conditional"),
+            "ASSESSMENT-LOCK-01": ("**forbidden**", "pre-generated question bank",
+                                   "explicit submission", "ielts speaking",
+                                   "after submission", "transcript is **not** evidence"),
+        }
+        for heading, markers in required.items():
+            area = self.section(lines, heading, 3)
+            if area is None:
+                self.emit(path, 1, "CANONICAL_LOCK_MISSING",
+                          f"Canonical {heading} decision section missing")
+                continue
+            start, stop = area
+            body = "\n".join(lines[start:stop]).casefold()
+            if any(marker not in body for marker in markers):
+                self.emit(path, start + 1, "CANONICAL_LOCK_DRIFT",
+                          f"Canonical {heading} markers changed; owner decision requires review")
+
+        scoring = self.root / "knowledge/features/assessment/scoring/spec.md"
+        if scoring.is_file():
+            scoring_lines = self.read(scoring)
+            if scoring_lines is not None:
+                for heading in ("## 3. IELTS scoring", "## 4. TOEIC scoring",
+                                "## 5. PTE Academic", "## 6. PTE Core"):
+                    if not any(line.startswith(heading) for line in scoring_lines):
+                        self.emit(scoring, 1, "SCORING_CONTRACT_MISSING",
+                                  f"Distinct exam/version scoring section missing: {heading[3:]}")
+
     def run(self) -> list[Issue]:
         self.get_inventory()
         directory = self.root / "specs"
@@ -526,6 +570,7 @@ class Validator:
                 continue
             self.document_conventions(path, lines)
             self.links(path, lines, template=path == self.root / TEMPLATE)
+        self.product_contract_locks()
         self.warnings = sorted(set(self.warnings))
         return sorted(set(self.errors))
 
