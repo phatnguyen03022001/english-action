@@ -28,11 +28,12 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertIn(old, current)
         self.spec.write_text(current.replace(old, new, 1), encoding="utf-8")
 
-    def run_cli(self, root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run_cli(self, root: Path | None = None, *, product_locks: bool = False) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         return subprocess.run(
-            [sys.executable, "-m", "english_action.spec_validate", "--root", str(root or self.root)],
+            [sys.executable, "-m", "english_action.spec_validate", "--root", str(root or self.root)]
+            + (["--product-locks"] if product_locks else []),
             cwd=ROOT, env=environment, text=True, capture_output=True, check=False, timeout=30,
         )
 
@@ -428,7 +429,7 @@ class SpecificationValidatorTests(unittest.TestCase):
         path.write_text(path.read_text(encoding="utf-8") +
                         "\nHistorical quotation: browser speech was once permitted.\n",
                         encoding="utf-8")
-        result = self.run_cli()
+        result = self.run_cli(product_locks=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_missing_speech_generator_lock_fails_without_keyword_ban(self) -> None:
@@ -436,7 +437,7 @@ class SpecificationValidatorTests(unittest.TestCase):
         path = self.root / "knowledge/product/decisions.md"
         path.write_text(path.read_text(encoding="utf-8").replace(
             "only by `edge-tts`", "using an arbitrary TTS engine"), encoding="utf-8")
-        result = self.run_cli()
+        result = self.run_cli(product_locks=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("ERROR CANONICAL_LOCK_DRIFT:", result.stdout)
 
@@ -445,7 +446,7 @@ class SpecificationValidatorTests(unittest.TestCase):
         path = self.root / "knowledge/product/decisions.md"
         path.write_text(path.read_text(encoding="utf-8").replace(
             "after submission", "between speaking questions"), encoding="utf-8")
-        result = self.run_cli()
+        result = self.run_cli(product_locks=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("ERROR CANONICAL_LOCK_DRIFT:", result.stdout)
 
@@ -454,7 +455,7 @@ class SpecificationValidatorTests(unittest.TestCase):
         path = self.root / "knowledge/features/assessment/scoring/spec.md"
         path.write_text(path.read_text(encoding="utf-8").replace(
             "## 6. PTE Core scoring", "## 6. Shared scoring"), encoding="utf-8")
-        result = self.run_cli()
+        result = self.run_cli(product_locks=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("ERROR SCORING_CONTRACT_MISSING:", result.stdout)
 
@@ -463,7 +464,7 @@ class SpecificationValidatorTests(unittest.TestCase):
         path = self.root / "knowledge/product/decisions.md"
         path.write_text(path.read_text(encoding="utf-8").replace(
             "### ASSESSMENT-LOCK-01", "### Legacy runtime discussion"), encoding="utf-8")
-        result = self.run_cli()
+        result = self.run_cli(product_locks=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("ERROR CANONICAL_LOCK_MISSING:", result.stdout)
 

@@ -64,8 +64,9 @@ class Spec:
 
 
 class Validator:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, product_locks: bool = False):
         self.root = root
+        self.product_locks = product_locks
         self.errors: list[Issue] = []
         self.warnings: list[Issue] = []
         self.inventory: set[str] = set()
@@ -570,7 +571,8 @@ class Validator:
                 continue
             self.document_conventions(path, lines)
             self.links(path, lines, template=path == self.root / TEMPLATE)
-        self.product_contract_locks()
+        if self.product_locks:
+            self.product_contract_locks()
         self.warnings = sorted(set(self.warnings))
         return sorted(set(self.errors))
 
@@ -578,11 +580,13 @@ class Validator:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True, help="Caller repository (read-only)")
+    parser.add_argument("--product-locks", action="store_true",
+                        help="Enforce decisions approved at this source revision (central CI ancestry gate)")
     args = parser.parse_args(argv)
     if not args.root.is_dir():
         print("spec-validate: --root must be an existing directory", file=sys.stderr)
         return 2
-    validator = Validator(args.root.resolve())
+    validator = Validator(args.root.resolve(), product_locks=args.product_locks)
     problems = validator.run()
     warnings = validator.warnings
     for item in problems[:MAX_OUTPUT]:

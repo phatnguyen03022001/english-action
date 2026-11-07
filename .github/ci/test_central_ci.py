@@ -60,8 +60,33 @@ class RecoveryTests(unittest.TestCase):
         items = [status("one", "failure"), status("two")]
         self.api.status_map[self.api.hist[0]] = items
         work = ci.select_work(self.api, "english", self.target, "", "ci[bot]")
-        self.assertEqual(work[0][0], self.api.hist[1])
+        self.assertIn(self.api.hist[1], [sha for sha, _ in work])
         self.assertEqual(items[0]["state"], "failure")
+        self.assertEqual(work[0][0], self.api.hist[-1])  # latest first
+
+    def test_latest_source_is_checked_first_without_abandoning_oldest_history(self):
+        work = ci.select_work(self.api, "english", self.target, "", "ci[bot]")
+        self.assertEqual([sha for sha, _ in work],
+                         [self.api.hist[-1], self.api.hist[0], self.api.hist[1]])
+
+    def test_approved_locks_apply_only_after_decision_adoption(self):
+        self.target["lock_from"] = "c" * 40
+        self.assertEqual(ci.lock_revisions(self.api, "english", self.target),
+                         frozenset(self.api.hist[2:]))
+        captured = []
+        with patch.object(ci, "verify",
+                          side_effect=lambda repo, sha, target, suite, token:
+                              captured.append((sha, target["product_lock_active"])) or "PASS"), \
+             patch.object(ci, "record"):
+            self.assertFalse(ci.run(self.api, "english", self.target,
+                                    [(self.api.hist[1], ["one"]),
+                                     (self.api.hist[2], ["one"])]))
+        self.assertEqual(captured, [(self.api.hist[1], False), (self.api.hist[2], True)])
+
+    def test_missing_adoption_sha_blocks_instead_of_skipping_contracts(self):
+        self.target["lock_from"] = "f" * 40
+        with self.assertRaisesRegex(ci.Blocked, "adoption SHA absent"):
+            ci.lock_revisions(self.api, "english", self.target)
 
     def test_manual_reruns_full_sha_even_when_it_passed(self):
         sha = self.api.hist[0]

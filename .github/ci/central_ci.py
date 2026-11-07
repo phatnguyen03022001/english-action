@@ -119,8 +119,13 @@ def select_work(api, repo, target, manual_sha, creator):
         if manual_sha not in history:
             raise Blocked("Manual SHA must belong to main at/after migration baseline")
         return [(manual_sha, target["suites"])]
-    work = []
-    for sha in history:
+    # Verify the latest source revision promptly; still catch up every older
+    # immutable revision (oldest first) in the remaining bounded slots.
+    latest = history[-1]
+    pending = [suite for suite in target["suites"]
+               if suite not in completed_suites(api.statuses(repo, latest), target, creator)]
+    work = [(latest, pending)] if pending else []
+    for sha in history[:-1]:
         done = completed_suites(api.statuses(repo, sha), target, creator)
         missing = [suite for suite in target["suites"] if suite not in done]
         if missing:
@@ -128,6 +133,18 @@ def select_work(api, repo, target, manual_sha, creator):
             if len(work) == CONFIG["batch_size"]:
                 break
     return work
+
+
+def lock_revisions(api, repo, target):
+    """Only enforce newer Owner decisions on descendants of their adoption SHA."""
+    baseline = target.get("lock_from")
+    if baseline is None:
+        return frozenset()
+    valid_sha(baseline)
+    history = api.history(repo, target)
+    if baseline not in history:
+        raise Blocked("Contract lock adoption SHA absent from verified main history")
+    return frozenset(history[history.index(baseline):])
 
 
 def clean_env():
@@ -201,7 +218,11 @@ def verify(repo, sha, target, suite, token):
         env = clean_env()
         env["RUNNER_TEMP"] = str(root)
         if suite == "spec-validation":
-            commands = [[str(python), "-m", "english_action.english.spec_validate", "--root", str(source)]]
+            spec_command = [str(python), "-m", "english_action.english.spec_validate",
+                            "--root", str(source)]
+            if target.get("product_lock_active"):
+                spec_command.append("--product-locks")
+            commands = [spec_command]
         elif suite == "content-quality":
             commands = [
                 [str(python), "-m", "english_action.content.cli", "schemas-check", "--schemas", "schemas"],
@@ -244,13 +265,15 @@ def record(repo, sha, suite, outcome, pin):
 
 def run(api, repo, target, work):
     bad = False
+    locked = lock_revisions(api, repo, target)
     for sha, suites in work:
         blocked = False
         for suite in suites:
             try:
                 # This also proves statuses:write before executing private code.
                 api.status(repo, sha, suite, "RUNNING", target["pin"])
-                outcome = verify(repo, sha, target, suite, api.token)
+                configured = {**target, "product_lock_active": sha in locked}
+                outcome = verify(repo, sha, configured, suite, api.token)
             except Blocked as error:
                 print(f"BLOCKED: {repo} {sha} {suite}; {error}", flush=True)
                 outcome = "BLOCKED"

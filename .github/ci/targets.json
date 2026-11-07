@@ -7,7 +7,8 @@
       "pin": "e6610e8f9a6d4fda52c0eb92f16afb59e54644cb",
       "suites": [
         "spec-validation"
-      ]
+      ],
+      "lock_from": "d89b3669f909696fc0c84f49ce1ad73a0be15570"
     },
     "english-content": {
       "baseline": "4e72321f5ab6b96f621925a8195ac69a550cfe6b",
