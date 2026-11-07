@@ -62,13 +62,19 @@ def _texts(xs: Any, *, minimum: int = 1) -> bool:
     return isinstance(xs, list) and len(xs) >= minimum and all(_text(x) for x in xs)
 
 
+def _distinct_after_trim(xs: list[str]) -> bool:
+    """Reject redundant authored forms, not semantically different answers."""
+    return len({x.strip() for x in xs}) == len(xs)
+
+
 def _asset(asset: Any) -> bool:
     return (isinstance(asset, dict) and asset.keys() <= ASSET_FIELDS and all(_text(asset.get(k)) for k in ("logicalId", "provider", "model", "mediaType", "storage"))
             and asset["mediaType"] in ("audio", "image")
             and type(asset.get("revision")) is int and asset["revision"] > 0
             and isinstance(asset.get("sha256"), str) and bool(_HEX.fullmatch(asset["sha256"]))
             and asset.get("rightsStatus") in ("unknown", "reference_only", "permission_required", "redistributable")
-            and _text(asset.get("accessibility")))
+            and _text(asset.get("accessibility"))
+            and ("locator" not in asset or _text(asset["locator"])))
 
 
 def validate_content(recipe: str, payload: Any) -> list[str]:
@@ -87,7 +93,7 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
     if recipe == "N1-01":
         if not _text(payload["viCue"]) or not _texts(payload["enExpressions"]) or not _texts(payload["senseRefs"]):
             errors.append("FLASHCARD_CONTENT_INVALID")
-        elif (len(set(payload["enExpressions"])) != len(payload["enExpressions"]) or
+        elif (not _distinct_after_trim(payload["enExpressions"]) or
               not all(_UUID7_SENSE.fullmatch(s) for s in payload["senseRefs"]) or
               len(set(payload["senseRefs"])) != len(payload["senseRefs"])):
             errors.append("FLASHCARD_SENSE_OR_DUPLICATE_INVALID")
@@ -95,13 +101,13 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
         if (not all(_text(payload[k]) for k in ("context", "prompt", "key", "rationale"))
                 or not isinstance(payload["alternatives"], list)
                 or not all(_text(v) for v in payload["alternatives"])
-                or payload["key"] in payload["alternatives"]
-                or len(set(payload["alternatives"])) != len(payload["alternatives"])):
+                or payload["key"].strip() in {v.strip() for v in payload["alternatives"]}
+                or not _distinct_after_trim(payload["alternatives"])):
             errors.append("CLOZE_KEY_INVALID")
     elif recipe == "N3-11":
         if (not _texts(payload["phonemes"], minimum=2) or len(payload["phonemes"]) != 2
-                or len(set(payload["phonemes"])) != 2 or not _texts(payload["labels"], minimum=2)
-                or len(payload["labels"]) != 2 or len(set(payload["labels"])) != 2
+                or not _distinct_after_trim(payload["phonemes"]) or not _texts(payload["labels"], minimum=2)
+                or len(payload["labels"]) != 2 or not _distinct_after_trim(payload["labels"])
                 or payload["key"] not in payload["labels"]
                 or not isinstance(payload["assets"], list) or len(payload["assets"]) != 2
                 or not all(_asset(a) and a["mediaType"] == "audio" for a in payload["assets"])
@@ -110,20 +116,20 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
     elif recipe == "K1-16":
         if (not _text(payload["transcript"]) or not _texts(payload["acceptedForms"])
                 or payload["transcript"] not in payload["acceptedForms"]
-                or len(set(payload["acceptedForms"])) != len(payload["acceptedForms"])
+                or not _distinct_after_trim(payload["acceptedForms"])
                 or not _asset(payload["audio"]) or payload["audio"]["mediaType"] != "audio"):
             errors.append("DICTATION_ALIGNMENT_NOT_VERIFIED")
     elif recipe == "K1-17":
         if (not all(_text(payload[k]) for k in ("passage", "question", "mainIdea", "answerKey", "rationale"))
                 or not _texts(payload["alternatives"], minimum=2)
-                or len(set(payload["alternatives"])) != len(payload["alternatives"])
+                or not _distinct_after_trim(payload["alternatives"])
                 or payload["answerKey"] not in payload["alternatives"]
                 or not _asset(payload["audio"]) or payload["audio"]["mediaType"] != "audio"):
             errors.append("GIST_CONTENT_INVALID")
     elif recipe == "K2-21":
         if (not all(_text(payload[k]) for k in ("passage", "question", "mainIdea", "answerKey"))
                 or not _texts(payload["alternatives"], minimum=2)
-                or len(set(payload["alternatives"])) != len(payload["alternatives"])
+                or not _distinct_after_trim(payload["alternatives"])
                 or payload["answerKey"] not in payload["alternatives"]):
             errors.append("READING_KEY_INVALID")
         if "rationale" in payload and not _text(payload["rationale"]):

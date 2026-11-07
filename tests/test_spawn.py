@@ -66,6 +66,40 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result[0]["recipe"], recipe)
                 self.assertEqual(result[0]["provenance"]["mode"], "synthetic")
 
+    async def test_trim_equivalent_answers_and_choices_are_not_distinct(self):
+        # Duplicate detection is orthographic only. Never infer a new accepted synonym.
+        cases = {
+            "N1-01": ("enExpressions", ["sample expression", " sample expression "]),
+            "N2-06": ("alternatives", ["had", " had "]),
+            "N3-11": ("labels", ["ship", " ship "]),
+            "K1-16": ("acceptedForms", ["Example sentence", " Example sentence "]),
+            "K1-17": ("alternatives", ["A synthetic point", " A synthetic point "]),
+            "K2-21": ("alternatives", ["A synthetic point", " A synthetic point "]),
+        }
+        for recipe, (field, values) in cases.items():
+            with self.subTest(recipe=recipe):
+                payload = good(recipe)
+                payload[field] = values
+                self.assertTrue(validate_content(recipe, payload))
+                item = seed(recipe)
+                item["fixture"] = payload
+                produced = (await generate(batch([item]), SyntheticWorker()))[0]
+                self.assertEqual(produced["status"], "REJECTED")
+        cloze = good("N2-06")
+        cloze["alternatives"] = [" has "]
+        self.assertTrue(validate_content("N2-06", cloze))  # Same as the key after trim.
+        cloze["alternatives"] = ["has not", "had"]
+        self.assertEqual(validate_content("N2-06", cloze), [])
+        # Reviewed spelling, negation, and punctuation distinctions are not collapsed.
+        for recipe in ("N3-11", "K1-16", "K1-17"):
+            with self.subTest(recipe=recipe, case="bad_asset_locator"):
+                payload = good(recipe)
+                asset = payload["assets"][0] if recipe == "N3-11" else payload["audio"]
+                asset["locator"] = []
+                self.assertTrue(validate_content(recipe, payload))
+                asset["locator"] = "synthetic:asset:located"
+                self.assertEqual(validate_content(recipe, payload), [])
+
     async def test_negative_semantic_shapes_each_recipe(self):
         modifications = {
             "N1-01": lambda x: x.update(senseRefs=["sns_not_a_uuid"]),
