@@ -6,6 +6,10 @@ from pathlib import Path
 import tempfile
 import unittest
 import wave
+import zlib
+
+from PIL import Image
+from unittest.mock import patch
 
 from english_action.content.spawn import (
     _media_issues, media_binding, verify_media,
@@ -176,6 +180,135 @@ class MediaVerificationTests(unittest.TestCase):
         self.assets.clear()
         self.assertIn("MEDIA_BINDING_INPUT_INVALID", self.verify()["issues"])
 
+
+
+class RasterMediaTests(unittest.TestCase):
+    """Real decoder-level tests with tiny generated images, never semantic approval."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.source = source()
+        self.configuration = {"render": "synthetic"}
+
+    def encoded(self, fmt):
+        stream = BytesIO()
+        Image.new("RGB", (4, 3), (20, 80, 140)).save(
+            stream, format=fmt, **({"lossless": True} if fmt == "WEBP" else {}))
+        return stream.getvalue()
+
+    def report(self, data, filename, kind="image", digest=None):
+        (self.root / filename).write_bytes(data)
+        a = asset(data, filename, kind)
+        if digest is not None:
+            a["sha256"] = digest
+        return verify_media([a], self.source, self.configuration, str(self.root))
+
+    def test_valid_png_and_webp_decode_and_never_grant_publication(self):
+        for fmt in ("PNG", "WEBP"):
+            with self.subTest(fmt=fmt):
+                suffix = fmt.lower()
+                data = self.encoded(fmt)
+                with Image.open(BytesIO(data)) as decoded:
+                    self.assertEqual(decoded.format, fmt)
+                    self.assertEqual(decoded.size, (4, 3))
+                    decoded.load()
+                report = self.report(data, "image." + suffix)
+                self.assertEqual(report["issues"], [])
+                self.assertEqual(report["checks"]["integrity"], "PASS")
+                for check in ("actualContent", "rightsClearance", "editorialAuthorization"):
+                    self.assertEqual(report["checks"][check], "NOT_VERIFIED")
+                self.assertEqual(report["status"], "HOLD")
+                self.assertFalse(report["publicationEligible"])
+                self.assertFalse(report["newUseAllowed"])
+
+    def test_png_corruption_and_truncation_fail_with_recomputed_hash(self):
+        data = self.encoded("PNG")
+        # Valid PNG signature/IHDR, but tampered IDAT CRC.
+        index = data.index(b"IDAT") + 4
+        corrupt = data[:index] + bytes([data[index] ^ 0xff]) + data[index + 1:]
+        for payload in (corrupt, data[:-8], data[:16], b"not-a-png"):
+            with self.subTest(length=len(payload)):
+                report = self.report(payload, "image.png")
+                self.assertIn("IMAGE_BYTES_INVALID", report["issues"])
+                self.assertEqual(report["checks"]["integrity"], "FAIL")
+
+    def test_webp_corruption_truncation_and_riff_dispatch(self):
+        data = self.encoded("WEBP")
+        self.assertEqual(data[:4], b"RIFF")
+        self.assertEqual(data[8:12], b"WEBP")
+        self.assertEqual(self.report(data, "image.webp")["issues"], [])
+        for payload in (data[:-6], data[:12], data[:4] + b"\x00" * 4 + data[8:],
+                        data[:8] + b"NOPE" + data[12:]):
+            with self.subTest(length=len(payload)):
+                report = self.report(payload, "image.webp")
+                self.assertIn("IMAGE_BYTES_INVALID", report["issues"])
+        # Even valid RIFF/WebP is never treated as audio.
+        self.assertIn("MEDIA_TYPE_MISMATCH", self.report(data, "image.webp", "audio")["issues"])
+
+    def test_mismatched_hash_extension_and_declared_media_type(self):
+        png, webp = self.encoded("PNG"), self.encoded("WEBP")
+        self.assertIn("MEDIA_HASH_MISMATCH",
+                      self.report(png, "image.png", digest="f" * 64)["issues"])
+        for payload, name, kind in ((png, "image.webp", "image"),
+                                    (webp, "image.png", "image"),
+                                    (png, "image.bin", "image"),
+                                    (webp, "image.webp", "audio"),
+                                    (wav_bytes(), "image.wav", "image"),
+                                    (wav_bytes(), "image.png", "image"),
+                                    (SVG, "image.png", "image")):
+            with self.subTest(name=name, kind=kind):
+                self.assertIn("MEDIA_TYPE_MISMATCH",
+                              self.report(payload, name, kind)["issues"])
+        for name, payload in (("image.gif", b"GIF89a"), ("image.bin", b"unknown")):
+            self.assertIn("MEDIA_ENCODING_UNSUPPORTED",
+                          self.report(payload, name)["issues"])
+
+    def test_dimensions_pixels_and_encoded_size_are_bounded(self):
+        data = self.encoded("PNG")
+        # Only change IHDR dimensions and CRC; no huge allocation in tests.
+        def dimensions(width, height):
+            header = (data[:16] + width.to_bytes(4, "big") + height.to_bytes(4, "big")
+                      + data[24:29])
+            crc = zlib.crc32(header[12:29]).to_bytes(4, "big")
+            return header + crc + data[33:]
+        for width, height in ((10001, 1), (5000, 6000)):
+            with self.subTest(size=(width, height)):
+                self.assertIn("IMAGE_DIMENSIONS_INVALID",
+                              self.report(dimensions(width, height), "image.png")["issues"])
+        self.assertTrue({"IMAGE_BYTES_INVALID", "IMAGE_DIMENSIONS_INVALID"} &
+                        set(self.report(dimensions(0, 1), "image.png")["issues"]))
+        with patch("english_action.content.spawn._MAX_MEDIA_BYTES", 16):
+            self.assertIn("MEDIA_RESOURCE_LIMIT",
+                          self.report(data, "image.png")["issues"])
+
+    def test_animated_webp_is_not_an_authorized_static_asset(self):
+        stream = BytesIO()
+        first = Image.new("RGB", (4, 3), "red")
+        second = Image.new("RGB", (4, 3), "blue")
+        first.save(stream, format="WEBP", save_all=True, append_images=[second],
+                   duration=100, loop=0, lossless=True)
+        data = stream.getvalue()
+        with Image.open(BytesIO(data)) as image:
+            self.assertGreater(image.n_frames, 1)
+        self.assertIn("IMAGE_ANIMATED_UNSUPPORTED",
+                      self.report(data, "animation.webp")["issues"])
+
+    def test_valid_decoded_image_with_missing_review_and_rights_stays_hold(self):
+        data = self.encoded("PNG")
+        (self.root / "image.png").write_bytes(data)
+        a = asset(data, "image.png", "image")
+        binding = media_binding([a], self.source, self.configuration)
+        report = verify_media([a], self.source, self.configuration, str(self.root),
+                              reviewed_binding=binding, rights_status="cleared")
+        self.assertEqual(report["checks"]["integrity"], "PASS")
+        self.assertEqual(report["checks"]["dependencyBinding"], "PASS")
+        self.assertEqual(report["checks"]["actualContent"], "NOT_VERIFIED")
+        self.assertEqual(report["checks"]["rightsClearance"], "NOT_VERIFIED")
+        self.assertEqual(report["checks"]["editorialAuthorization"], "NOT_VERIFIED")
+        self.assertFalse(report["publicationEligible"])
+        self.assertFalse(report["newUseAllowed"])
 
 if __name__ == "__main__":
     unittest.main()

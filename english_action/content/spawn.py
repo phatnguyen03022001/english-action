@@ -19,6 +19,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
+from PIL import Image, UnidentifiedImageError
 
 from .cli import _atomic_save, _path_safe, _read_state, _state_lock
 from .contracts import SchemaDirectory
@@ -40,6 +41,9 @@ REQUIRED = {
 ASSET_FIELDS = frozenset(("logicalId", "provider", "model", "mediaType", "storage",
                           "revision", "sha256", "rightsStatus", "accessibility", "locator"))
 UNRESOLVED = ("answer_key_review", "independent_editorial_authority", "source_dependency_evidence", "usage_rights_clearance")
+_MAX_MEDIA_BYTES = 32 * 1024 * 1024
+_MAX_RASTER_SIDE = 10000
+_MAX_RASTER_PIXELS = 25_000_000
 
 
 def _canonical(value: Any) -> str:
@@ -170,6 +174,9 @@ def _media_issues(assets: list[dict], root: Path) -> list[str]:
             resolved = path.resolve(strict=True)
             if not resolved.is_relative_to(root) or not resolved.is_file():
                 raise ValueError("unsafe")
+            if resolved.suffix.lower() != ".wav" and resolved.stat().st_size > _MAX_MEDIA_BYTES:
+                errors.append("MEDIA_RESOURCE_LIMIT")
+                continue
             data = resolved.read_bytes()
             if sha256(data).hexdigest() != asset["sha256"]:
                 errors.append("MEDIA_HASH_MISMATCH")
@@ -181,10 +188,20 @@ def _media_issues(assets: list[dict], root: Path) -> list[str]:
 
 
 def _media_bytes_issues(data: bytes, suffix: str, media_type: str) -> list[str]:
-    """Decode WAV/static SVG fixtures, never certify speech or visual meaning."""
-    if suffix == ".wav" or data.startswith(b"RIFF"):
-        if media_type != "audio":
-            return ["MEDIA_TYPE_MISMATCH"]
+    """Validate supported local media bytes, not meaning, rights or publication."""
+    formats = {".wav": ("WAVE", "audio"), ".svg": ("SVG", "image"),
+               ".png": ("PNG", "image"), ".webp": ("WEBP", "image")}
+    detected = (("PNG" if data.startswith(b"\x89PNG\r\n\x1a\n") else None)
+                or ("WAVE" if data[:4] == b"RIFF" and data[8:12] == b"WAVE" else None)
+                or ("WEBP" if data[:4] == b"RIFF" and data[8:12] == b"WEBP" else None)
+                or ("SVG" if data.lstrip().startswith(b"<svg") else None))
+    expected = formats.get(suffix)
+    if expected is None:
+        return ["MEDIA_TYPE_MISMATCH" if detected else "MEDIA_ENCODING_UNSUPPORTED"]
+    encoding, declared_type = expected
+    if media_type != declared_type or (detected and detected != encoding):
+        return ["MEDIA_TYPE_MISMATCH"]
+    if suffix == ".wav":
         try:
             if (len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE"
                     or int.from_bytes(data[4:8], "little") + 8 != len(data)):
@@ -199,9 +216,30 @@ def _media_bytes_issues(data: bytes, suffix: str, media_type: str) -> list[str]:
                     return ["AUDIO_SILENT"]
         except (wave.Error, EOFError, ValueError):
             return ["AUDIO_BYTES_INVALID"]
-    elif suffix == ".svg" or data.lstrip().startswith(b"<svg"):
-        if media_type != "image":
-            return ["MEDIA_TYPE_MISMATCH"]
+    elif suffix in (".png", ".webp"):
+        # WebP and WAV both use RIFF: check form type and container length.
+        if suffix == ".webp" and (len(data) < 12 or data[:4] != b"RIFF"
+                                  or data[8:12] != b"WEBP"
+                                  or int.from_bytes(data[4:8], "little") + 8 != len(data)):
+            return ["IMAGE_BYTES_INVALID"]
+        try:
+            with Image.open(BytesIO(data)) as image:
+                if image.format != encoding:
+                    return ["MEDIA_TYPE_MISMATCH"]
+                width, height = image.size
+                if (not 0 < width <= _MAX_RASTER_SIDE
+                        or not 0 < height <= _MAX_RASTER_SIDE
+                        or width * height > _MAX_RASTER_PIXELS):
+                    return ["IMAGE_DIMENSIONS_INVALID"]
+                if getattr(image, "n_frames", 1) != 1:
+                    return ["IMAGE_ANIMATED_UNSUPPORTED"]
+                image.verify()  # Container/chunks; does not decode pixels.
+            with Image.open(BytesIO(data)) as image:
+                image.load()    # Full pixel decode; rejects truncated/corrupt payloads.
+        except (UnidentifiedImageError, OSError, ValueError, SyntaxError, EOFError,
+                Image.DecompressionBombError):
+            return ["IMAGE_BYTES_INVALID"]
+    elif suffix == ".svg":
         # Narrow static graphics profile. No browser, network or code.
         tags = {"svg", "g", "title", "desc", "rect", "line", "text",
                 "path", "polyline", "polygon", "circle", "ellipse"}
@@ -227,8 +265,6 @@ def _media_bytes_issues(data: bytes, suffix: str, media_type: str) -> list[str]:
                 return ["IMAGE_DIMENSIONS_INVALID"]
         except (ET.ParseError, KeyError, ValueError, UnicodeError):
             return ["IMAGE_BYTES_INVALID"]
-    # Other encodings need their own decoder/actual-output review. A hash may
-    # still prove byte identity; it cannot prove an unsupported file works.
     return []
 
 

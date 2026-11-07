@@ -7,7 +7,7 @@ name = "english-action-quality"
 version = "0.1.0"
 description = "Public content quality engine for private English producer inputs"
 requires-python = ">=3.11"
-dependencies = ["jsonschema>=4.23,<5"]
+dependencies = ["jsonschema>=4.23,<5", "Pillow>=13.0,<14"]
 
 [project.scripts]
 english-quality = "english_action.content.cli:main"
