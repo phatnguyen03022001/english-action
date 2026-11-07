@@ -112,11 +112,11 @@ policy denial is NOT VERIFIED, never a synthetic PASS.
 
 ### Commands and attribution
 
-| Source | Immutable implementation pin | Central check context | Preserved checks |
+| Source | Pin authority | Central check context | Preserved checks |
 | --- | --- | --- | --- |
-| english | 1df0657a7e080738d6e09461d3c85fdaa5675783 | central-ci/spec-validation | Existing Gate 2 validator |
-| english-content | 4c9ed747bc03479c70432f8901b9158c1bed1f29 | central-ci/content-quality | Schema byte equality, public engine regressions, private historical/consumer regressions |
-| english-content | Same engine pin | central-ci/spawn-draft | Public Spawn regressions; seven recipes; synthetic WAV hashes; draft/HOLD and rights gates; replay/conflict; negative contracts and media mismatch |
+| english | [`english.pin` in targets.json](.github/ci/targets.json) | central-ci/spec-validation | Existing Gate 2 validator |
+| english-content | [`english-content.pin` in targets.json](.github/ci/targets.json) | central-ci/content-quality | Schema byte equality, public engine regressions, private historical/consumer regressions |
+| english-content | Same `english-content.pin` | central-ci/spawn-draft | Public Spawn regressions; seven recipes; synthetic media integrity; draft/HOLD and rights gates; replay/conflict; negative contracts and media mismatch |
 
 Each suite uses an exact source checkout and a fresh venv with the specified
 public implementation. All command output is suppressed; only metadata and
@@ -135,8 +135,9 @@ Central tests use only synthetic/public fixtures.
   the complete history and includes the baseline. It never uses a latest-only
   cursor, timestamp or cache as proof of completed checks.
 - Every source commit is checked, including documentation-only commits. Each
-  invocation takes at most three oldest incomplete SHAs per repository. Newer
-  success cannot cover a missing older result. Pending/error, missing contexts,
+  invocation prioritizes the latest main SHA's missing suites, then fills the
+  remaining slots with oldest incomplete SHAs (up to `batch_size` per repository).
+  Newer success cannot cover a missing older result. Pending/error, missing contexts,
   foreign status authors and wrong pins are retried; failure remains a failure
   on its own SHA. A BLOCKED result stops advancement within that repository.
 - Open **Actions → Central Private Repository CI → Run workflow** on main.
