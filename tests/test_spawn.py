@@ -258,7 +258,7 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
             buffer = BytesIO()
             with wave.open(buffer, "wb") as audio:
                 audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
-                audio.writeframes(b"\x01\x00" * 80)
+                audio.writeframes(b"\xe8\x03\x18\xfc" * 40)
             media.write_bytes(buffer.getvalue())
             fixture = seed("K1-16")
             asset = fixture["fixture"]["audio"]
