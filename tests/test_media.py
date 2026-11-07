@@ -20,7 +20,7 @@ def wav_bytes(silent=False):
     stream = BytesIO()
     with wave.open(stream, "wb") as audio:
         audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
-        audio.writeframes((b"\x00\x00" if silent else b"\x01\x00") * 80)
+        audio.writeframes(b"\x00\x00" * 80 if silent else b"\xe8\x03\x18\xfc" * 40)
     return stream.getvalue()
 
 
@@ -74,6 +74,28 @@ class MediaVerificationTests(unittest.TestCase):
                 (self.root / "sample.wav").write_bytes(data)
                 self.assets[0] = asset(data)
                 self.assertIn(reason, self.verify()["issues"])
+
+    def test_wav_resource_limit_applies_before_reading_bytes(self):
+        with patch("english_action.content.spawn._MAX_MEDIA_BYTES", len(self.data) - 1):
+            report = self.verify()
+            self.assertIn("MEDIA_RESOURCE_LIMIT", report["issues"])
+            self.assertEqual(report["checks"]["integrity"], "FAIL")
+
+    def test_pcm_constant_dc_and_hard_clipping_are_rejected(self):
+        for samples, reason in ((b"\xe8\x03" * 80, "AUDIO_SILENT"),
+                                (b"\xff\x7f\x00\x80" * 40, "AUDIO_CLIPPED")):
+            stream = BytesIO()
+            with wave.open(stream, "wb") as audio:
+                audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+                audio.writeframes(samples)
+            payload = stream.getvalue()
+            (self.root / "sample.wav").write_bytes(payload)
+            self.assets[0] = asset(payload)
+            with self.subTest(reason=reason):
+                report = self.verify()
+                self.assertIn(reason, report["issues"])
+                self.assertEqual(report["checks"]["integrity"], "FAIL")
+                self.assertFalse(report["publicationEligible"])
 
     def test_bad_locator_missing_bytes_hash_and_symlink_fail(self):
         for locator, reason in (("", "MEDIA_LOCATOR_INVALID"),

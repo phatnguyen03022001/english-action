@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import sys
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -180,7 +181,7 @@ def _media_issues(assets: list[dict], root: Path) -> list[str]:
             resolved = path.resolve(strict=True)
             if not resolved.is_relative_to(root) or not resolved.is_file():
                 raise ValueError("unsafe")
-            if resolved.suffix.lower() != ".wav" and resolved.stat().st_size > _MAX_MEDIA_BYTES:
+            if resolved.stat().st_size > _MAX_MEDIA_BYTES:
                 errors.append("MEDIA_RESOURCE_LIMIT")
                 continue
             data = resolved.read_bytes()
@@ -193,8 +194,46 @@ def _media_issues(assets: list[dict], root: Path) -> list[str]:
     return errors
 
 
+def _pcm_signal_issues(frames: bytes, width: int) -> list[str]:
+    """Detect silence/DC and hard clipping in bounded, uncompressed PCM only.
+
+    No transcript, pronunciation, loudness or rights decision follows from this.
+    """
+    if width == 1:
+        samples = iter(frames)
+        minimum, maximum = 0, 255
+    elif width in (2, 4):
+        fmt = "<h" if width == 2 else "<i"
+        samples = (sample[0] for sample in struct.iter_unpack(fmt, frames))
+        minimum, maximum = -(1 << (8 * width - 1)), (1 << (8 * width - 1)) - 1
+    elif width == 3:
+        samples = (int.from_bytes(frames[i:i + 3], "little", signed=True)
+                   for i in range(0, len(frames), 3))
+        minimum, maximum = -(1 << 23), (1 << 23) - 1
+    else:
+        return ["AUDIO_BYTES_INVALID"]
+    first = None
+    varied = False
+    clipped = count = 0
+    for sample in samples:
+        if first is None:
+            first = sample
+        elif sample != first:
+            varied = True
+        count += 1
+        if sample in (minimum, maximum):
+            clipped += 1
+    if not varied:
+        return ["AUDIO_SILENT"]  # Includes nonzero constant DC, not only zero PCM.
+    if clipped * 100 >= count:  # >=1% hard full-scale samples: likely digital clipping.
+        return ["AUDIO_CLIPPED"]
+    return []
+
+
 def _media_bytes_issues(data: bytes, suffix: str, media_type: str) -> list[str]:
     """Validate supported local media bytes, not meaning, rights or publication."""
+    if len(data) > _MAX_MEDIA_BYTES:
+        return ["MEDIA_RESOURCE_LIMIT"]
     formats = {".wav": ("WAVE", "audio"), ".svg": ("SVG", "image"),
                ".png": ("PNG", "image"), ".webp": ("WEBP", "image")}
     detected = (("PNG" if data.startswith(b"\x89PNG\r\n\x1a\n") else None)
@@ -213,13 +252,14 @@ def _media_bytes_issues(data: bytes, suffix: str, media_type: str) -> list[str]:
                     or int.from_bytes(data[4:8], "little") + 8 != len(data)):
                 return ["AUDIO_BYTES_INVALID"]
             with wave.open(BytesIO(data), "rb") as audio:
+                if (audio.getnchannels() < 1 or audio.getsampwidth() not in (1, 2, 3, 4)
+                        or audio.getframerate() < 1 or audio.getnframes() < 1):
+                    return ["AUDIO_BYTES_INVALID"]
                 frames = audio.readframes(audio.getnframes())
                 expected = audio.getnframes() * audio.getnchannels() * audio.getsampwidth()
-                if not frames or len(frames) != expected:
+                if len(frames) != expected:
                     return ["AUDIO_BYTES_INVALID"]
-                silence = 128 if audio.getsampwidth() == 1 else 0
-                if all(value == silence for value in frames):
-                    return ["AUDIO_SILENT"]
+                return _pcm_signal_issues(frames, audio.getsampwidth())
         except (wave.Error, EOFError, ValueError):
             return ["AUDIO_BYTES_INVALID"]
     elif suffix in (".png", ".webp"):
