@@ -79,9 +79,5 @@ jobs:
     if: github.event_name == 'push'
     needs: central-ci-contract-tests
     uses: ./.github/workflows/central-private-ci.yml
-    # T01 recovery: reproduce the exact inherited failure; remove after diagnosis.
-    with:
-      source_repository: english-content
-      source_sha: bc5aa7ea443ae0d5ab76c98e169b58fd1e24b8fc
     secrets:
       english: ${{ secrets.english }}

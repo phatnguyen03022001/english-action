@@ -175,24 +175,12 @@ def command(args, cwd, env=None, timeout=300, *, test_counts=None):
                 if not totals:
                     raise Blocked("Test discovery summary unavailable; details redacted")
                 skipped = re.findall(rb"skipped=([0-9]{1,12})", tail)
-                # Names/values remain private; expose only anonymous positions in
-                # the deterministic unittest discovery order (at most 32).
-                diagnostics.seek(0)
-                positions, failed = {}, set()
-                for line in diagnostics:
-                    case = re.match(rb"^(test[^\r\n]+? \([^\r\n]+?\)) \.\.\. ", line)
-                    if case:
-                        positions.setdefault(case[1], len(positions) + 1)
-                    failure = re.match(rb"^(?:FAIL|ERROR): (test[^\r\n]+? \([^\r\n]+?\))", line)
-                    if failure and failure[1] in positions:
-                        failed.add(positions[failure[1]])
                 failures = re.findall(rb"failures=([0-9]{1,12})", tail)
                 errors = re.findall(rb"errors=([0-9]{1,12})", tail)
                 test_counts.append({"tests": int(totals[-1]),
                                     "skipped": int(skipped[-1]) if skipped else 0,
                                     "failures": int(failures[-1]) if failures else 0,
-                                    "errors": int(errors[-1]) if errors else 0,
-                                    "failed_positions": sorted(failed)[:32]})
+                                    "errors": int(errors[-1]) if errors else 0})
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         raise Blocked("Command unavailable or timed out; details redacted") from None

@@ -240,7 +240,7 @@ class IsolationTests(unittest.TestCase):
             self.assertTrue(ci.command([sys.executable, "-c", script], Path(tmp),
                                        test_counts=counts))
         self.assertEqual(counts, [{"tests": 7, "skipped": 2, "failures": 0,
-                                  "errors": 0, "failed_positions": []}])
+                                  "errors": 0}])
         self.assertEqual(output.getvalue(), "")
         # Zero-exit private commands without discovery evidence cannot claim tests.
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,7 +248,7 @@ class IsolationTests(unittest.TestCase):
                 ci.command([sys.executable, "-c", "print('not tests')"], Path(tmp),
                            test_counts=[])
 
-    def test_failure_diagnostics_expose_only_counts_and_anonymous_positions(self):
+    def test_failure_diagnostics_expose_only_numeric_counts(self):
         script = ("import sys; "
                   "print('test_hidden (private.Case.test_hidden) ... ok', file=sys.stderr); "
                   "print('test_secret (private.Case.test_secret) ... FAIL', file=sys.stderr); "
@@ -261,7 +261,7 @@ class IsolationTests(unittest.TestCase):
             self.assertFalse(ci.command([sys.executable, "-c", script], Path(tmp),
                                         test_counts=counts))
         self.assertEqual(counts, [{"tests": 2, "skipped": 0, "failures": 1,
-                                  "errors": 0, "failed_positions": [2]}])
+                                  "errors": 0}])
         self.assertEqual(output.getvalue(), "")
         self.assertNotIn("private", repr(counts))
         self.assertNotIn("secret", repr(counts))
