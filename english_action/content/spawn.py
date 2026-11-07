@@ -74,7 +74,7 @@ def _asset(asset: Any) -> bool:
             and isinstance(asset.get("sha256"), str) and bool(_HEX.fullmatch(asset["sha256"]))
             and asset.get("rightsStatus") in ("unknown", "reference_only", "permission_required", "redistributable")
             and _text(asset.get("accessibility"))
-            and ("locator" not in asset or _text(asset["locator"])))
+            and ("locator" not in asset or isinstance(asset["locator"], str)))
 
 
 def validate_content(recipe: str, payload: Any) -> list[str]:
