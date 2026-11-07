@@ -75,7 +75,9 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
         return ["CONTENT_NOT_OBJECT"]
     if any(field not in payload for field in REQUIRED[recipe]):
         return ["CONTENT_REQUIRED_FIELD_MISSING"]
-    if payload.keys() - set(REQUIRED[recipe]):
+    # K2-21 v1 drafts may omit rationale; reviewed feedback must gate it.
+    allowed = set(REQUIRED[recipe]) | ({"rationale"} if recipe == "K2-21" else set())
+    if payload.keys() - allowed:
         return ["CONTENT_FIELD_NOT_ALLOWED"]
     errors = []
     if recipe == "N1-01":
@@ -120,6 +122,8 @@ def validate_content(recipe: str, payload: Any) -> list[str]:
                 or len(set(payload["alternatives"])) != len(payload["alternatives"])
                 or payload["answerKey"] not in payload["alternatives"]):
             errors.append("READING_KEY_INVALID")
+        if "rationale" in payload and not _text(payload["rationale"]):
+            errors.append("READING_RATIONALE_INVALID")
     elif recipe == "N2-10":
         tokens, orders = payload["tokens"], payload["acceptedOrderings"]
         if (not _text(payload["context"]) or not _text(payload["explanation"])
@@ -421,7 +425,7 @@ class OpenAIWorker:
                    "response_format": {"type": "json_object"},
                    "messages": [
                        {"role": "system", "content": "Generate exactly one unreviewed English learning content item as a JSON object. Return only the recipe-specific content object, never assert evidence, rights or editorial approval."},
-                       {"role": "user", "content": _canonical({"recipe": seed["recipe"], "request": seed["request"], "requiredFields": REQUIRED[seed["recipe"]]})},
+                       {"role": "user", "content": _canonical({"recipe": seed["recipe"], "request": seed["request"], "requiredFields": (*REQUIRED[seed["recipe"]], "rationale") if seed["recipe"] == "K2-21" else REQUIRED[seed["recipe"]]})},
                    ]}
         def call() -> dict:
             body = _canonical(request).encode()

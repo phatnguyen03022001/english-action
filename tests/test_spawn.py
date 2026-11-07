@@ -117,6 +117,54 @@ class SpawnAsyncTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(rejected["status"], "REJECTED")
                 self.assertEqual(rejected["generatedContentQuality"]["checks"]["recipeContent"], "FAIL")
 
+    async def test_reading_optional_rationale_preserves_v1_drafts_and_revision_history(self):
+        legacy = seed("K2-21")
+        revised = deepcopy(legacy)
+        revised["fixture"]["rationale"] = "Synthetic passage-grounded proposal; review still required."
+        # Surface wording can differ: this validator cannot establish meaning.
+        revised["fixture"]["mainIdea"] = "A paraphrased central idea"
+        for sample in (legacy, revised):
+            item = (await generate(batch([sample]), SyntheticWorker()))[0]
+            self.assertEqual(item["status"], "HOLD")
+            self.assertEqual(item["content"], sample["fixture"])
+            self.assertEqual(item["generatedContentQuality"]["checks"]["editorialCorrectness"], "NOT_VERIFIED")
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "draft.json")
+            first = batch([legacy], "reading-legacy")
+            persist(first, await generate(first, SyntheticWorker()), path, {})
+            before = json.loads(Path(path).read_text())
+            revised["expectedRevision"] = 1
+            correction = batch([revised], "reading-rationale-correction")
+            persist(correction, await generate(correction, SyntheticWorker()), path, {})
+            after = json.loads(Path(path).read_text())
+            self.assertEqual(after["history"][:1], before["history"])
+            identifier = next(iter(before["candidates"]))
+            self.assertNotIn("rationale", before["candidates"][identifier]["content"])
+            self.assertEqual(after["candidates"][identifier]["revision"], 2)
+            self.assertIn("rationale", after["candidates"][identifier]["content"])
+            frozen = Path(path).read_bytes()
+            self.assertTrue(persist(correction, await generate(correction, SyntheticWorker()),
+                                    path, {})["replayed"])
+            self.assertEqual(Path(path).read_bytes(), frozen)
+
+    async def test_reading_invalid_choices_and_present_rationale_fail_closed(self):
+        valid = good("K2-21")
+        cases = [
+            {**valid, "answerKey": "not displayed"},
+            {**valid, "alternatives": [valid["answerKey"], valid["answerKey"]]},
+            {**valid, "alternatives": [valid["answerKey"], 17]},
+            {**valid, "alternatives": [valid["answerKey"], " "]},
+            *[{**valid, "rationale": value} for value in ("", " ", None, [], {})],
+            {**valid, "explanation": "Unsupported alias"},
+        ]
+        for content in cases:
+            with self.subTest(content=content):
+                self.assertTrue(validate_content("K2-21", content))
+                sample = seed("K2-21")
+                sample["fixture"] = content
+                result = (await generate(batch([sample]), SyntheticWorker()))[0]
+                self.assertEqual(result["status"], "REJECTED")
+
     async def test_bounded_fanout_and_isolated_retry(self):
         class Flaky:
             provider, model = "test", "flaky"
