@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -238,13 +239,51 @@ class IsolationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertTrue(ci.command([sys.executable, "-c", script], Path(tmp),
                                        test_counts=counts))
-        self.assertEqual(counts, [{"tests": 7, "skipped": 2}])
+        self.assertEqual(counts, [{"tests": 7, "skipped": 2, "failures": 0,
+                                  "errors": 0, "failed_positions": []}])
         self.assertEqual(output.getvalue(), "")
         # Zero-exit private commands without discovery evidence cannot claim tests.
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ci.Blocked, "summary unavailable"):
                 ci.command([sys.executable, "-c", "print('not tests')"], Path(tmp),
                            test_counts=[])
+
+    def test_failure_diagnostics_expose_only_counts_and_anonymous_positions(self):
+        script = ("import sys; "
+                  "print('test_hidden (private.Case.test_hidden) ... ok', file=sys.stderr); "
+                  "print('test_secret (private.Case.test_secret) ... FAIL', file=sys.stderr); "
+                  "print('FAIL: test_secret (private.Case.test_secret)', file=sys.stderr); "
+                  "print('AssertionError: private fixture value', file=sys.stderr); "
+                  "print('Ran 2 tests in 0.01s', file=sys.stderr); "
+                  "print('FAILED (failures=1)', file=sys.stderr); sys.exit(1)")
+        counts = []
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertFalse(ci.command([sys.executable, "-c", script], Path(tmp),
+                                        test_counts=counts))
+        self.assertEqual(counts, [{"tests": 2, "skipped": 0, "failures": 1,
+                                  "errors": 0, "failed_positions": [2]}])
+        self.assertEqual(output.getvalue(), "")
+        self.assertNotIn("private", repr(counts))
+        self.assertNotIn("secret", repr(counts))
+
+    def test_phase_outcomes_keep_schema_engine_and_private_failures_distinct(self):
+        for failed in range(3):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(os.environ, {"RUNNER_TEMP": tmp, "GITHUB_SHA": "c" * 40}), \
+                    patch.object(ci, "checkout"), contextlib.redirect_stdout(io.StringIO()) as output:
+                checks = [i != failed for i in range(3)]
+                results = iter([True, True] + checks)
+                def run_command(args, cwd, **kwargs):
+                    if kwargs.get("test_counts") is not None:
+                        kwargs["test_counts"].append({"tests": 1, "skipped": 0})
+                    return next(results)
+                with patch.object(ci, "command", side_effect=run_command) as run:
+                    self.assertEqual(ci.verify("english-content", "a" * 40,
+                                               {"pin": "b" * 40}, "content-quality", "secret"), "FAIL")
+                self.assertEqual(run.call_count, 5)
+            evidence = json.loads(output.getvalue())
+            self.assertEqual(evidence["check_outcomes"],
+                             ["FAIL" if i == failed else "PASS" for i in range(3)])
 
     def test_suite_failure_cannot_be_masked_by_later_success(self):
         with tempfile.TemporaryDirectory() as tmp, \
