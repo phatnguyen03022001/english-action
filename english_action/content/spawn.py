@@ -731,13 +731,27 @@ def persist(batch: dict, generated: list[dict], path: str, quality: dict) -> dic
             if (evidence["candidateId"] != identifier or evidence["revision"] != revision
                     or evidence["contentHash"] != next_item["contentHash"]):
                 evidence = _candidate_quality(next_item, {"generation": "NOT_VERIFIED"}, [])
+            # Exact repeats and reused sources can understate effective bank
+            # diversity. Report candidates for review, never infer semantic
+            # equivalence, learner exposure or publication from these signals.
+            possible_reuse = {
+                "exactContentCandidateIds": sorted(
+                    cid for cid, previous in state["candidates"].items()
+                    if cid != identifier and previous.get("recipe") == next_item["recipe"]
+                    and previous.get("contentHash") == next_item["contentHash"]),
+                "sharedSourceCandidateIds": sorted(
+                    cid for cid, previous in state["candidates"].items()
+                    if cid != identifier and previous.get("recipe") == next_item["recipe"]
+                    and previous.get("sourceRef") == next_item["sourceRef"]),
+            }
             next_item["generatedContentQuality"] = evidence
             next_item.pop("expectedRevision", None)
             state["candidates"][identifier] = next_item
             state["history"].append({"candidateId": identifier, "batchId": batch["batchId"],
                                      "before": before, "after": next_item})
             statuses.append({**entry, "generatedContentQuality": evidence, "status": "HOLD",
-                             "revision": revision, "issues": list(UNRESOLVED)})
+                             "revision": revision, "issues": list(UNRESOLVED),
+                             "possibleReuse": possible_reuse})
         report = {"batchId": batch["batchId"], "status": "DRAFT_HOLD",
                   "generationMode": generated[0].get("provenance", {}).get("mode", "synthetic") if generated else "unknown",
                   "generated": len(generated), "drafts": sum(s["status"] == "HOLD" for s in statuses),

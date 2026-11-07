@@ -313,6 +313,41 @@ class StoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "BATCH_REPLAY_CONFLICT"):
                 persist({**a, "seeds": [{**a["seeds"][0], "request": {"changed": True}}]}, generated, path, q)
 
+    def test_cross_batch_reuse_is_diagnostic_not_false_unseen_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "state.json")
+            quality = {"status": "NOT_VERIFIED"}
+            first = batch([seed("N1-01", 1)], "reuse-1")
+            first_report = persist(first, asyncio.run(generate(first, SyntheticWorker())),
+                                   path, quality)
+            first_id = first_report["candidates"][0]["candidateId"]
+            self.assertEqual(first_report["candidates"][0]["possibleReuse"],
+                             {"exactContentCandidateIds": [], "sharedSourceCandidateIds": []})
+
+            # A distinct ID and source do not make repeated content independent.
+            repeated = batch([seed("N1-01", 2)], "reuse-2")
+            repeated_report = persist(repeated, asyncio.run(generate(repeated, SyntheticWorker())),
+                                      path, quality)
+            repeated_case = repeated_report["candidates"][0]
+            self.assertEqual(repeated_case["status"], "HOLD")
+            self.assertEqual(repeated_case["possibleReuse"]["exactContentCandidateIds"], [first_id])
+            self.assertEqual(repeated_case["possibleReuse"]["sharedSourceCandidateIds"], [])
+
+            # Reusing a source with changed content is not an exact duplicate.
+            related_seed = seed("N1-01", 3)
+            related_seed["sourceRef"] = first["seeds"][0]["sourceRef"]
+            related_seed["fixture"]["viCue"] = "A different synthetic cue"
+            related = batch([related_seed], "reuse-3")
+            related_report = persist(related, asyncio.run(generate(related, SyntheticWorker())),
+                                     path, quality)
+            related_case = related_report["candidates"][0]
+            self.assertEqual(related_case["possibleReuse"]["exactContentCandidateIds"], [])
+            self.assertEqual(related_case["possibleReuse"]["sharedSourceCandidateIds"], [first_id])
+            self.assertFalse(related_report["publicationEligible"])
+            self.assertEqual(repeated_report["rejected"], 0)
+            self.assertTrue(persist(repeated, asyncio.run(generate(repeated, SyntheticWorker())),
+                                    path, quality)["replayed"])
+
     def test_store_rejects_incomplete_and_non_hold_candidates(self):
         with tempfile.TemporaryDirectory() as d:
             a = batch([seed("N1-01")])

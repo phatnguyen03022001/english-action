@@ -35,6 +35,8 @@ The private [english-content consumer at Python-only cutover](https://github.com
 
 The public module exposes the async `Worker` protocol plus an explicit synthetic fixture worker and opt-in OpenAI Chat Completions adapter. The adapter is **not verified against a live provider** by synthetic CI. Real invocation requires a configured compatible model, `OPENAI_API_KEY`, and explicit `--provider openai --allow-real-ai`; requests are bounded by timeout and completion-token limit. GitHub Actions neither supplies nor authorizes AI credentials automatically. No real provider is used by default.
 
+Cross-batch HOLD reports include conservative `possibleReuse` signals for exact content repeats and same-recipe shared source references in persisted drafts. These signals do not reject legitimate variations, identify paraphrases, certify semantic novelty, or prove that material is unseen by a learner.
+
 The private consumer supplies the versioned producer JSON Schema, lexical schemas, lexical candidate fixture, source references and media. Example:
 
 ```sh
