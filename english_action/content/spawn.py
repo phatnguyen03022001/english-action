@@ -389,6 +389,82 @@ def _candidate_quality(item: dict, checks: dict, issues: list[str]) -> dict:
             "checks": checks, "issues": sorted(set(issues))}
 
 
+
+def prepare_text_review(state: dict, batch: dict, candidate_id: str) -> dict:
+    """Project the existing text pilot from a persisted snapshot, never approve it.
+
+    Give only blindPacket to the independent solver. mechanicalEvidence is for
+    the coordinator: unchanged field digests do not transfer semantic review,
+    rights, appointment or publication authority. Use the batch that created
+    the current snapshot, including after an unchanged CAS submission.
+    """
+    _check_batch(batch)
+    item = state.get("candidates", {}).get(candidate_id)
+    recorded = state.get("runs", {}).get(batch["batchId"], {})
+    seed = next((s for s in batch["seeds"]
+                 if item and s["seedId"] == item.get("seedId")), None)
+    history = [h for h in state.get("history", [])
+               if h.get("candidateId") == candidate_id]
+    fields = {"N2-06": ("context", "prompt"),
+              "K2-21": ("passage", "question", "alternatives"),
+              "N2-10": ("context", "tokens", "constraints")}
+    if (not item or not seed or recorded.get("inputHash") != _hash(batch)
+            or item.get("batchId") != batch["batchId"] or item.get("status") != "HOLD"
+            or item.get("recipe") not in fields
+            or item.get("recipe") != seed["recipe"]
+            or item.get("sourceRef") != seed["sourceRef"]
+            or item.get("sourceRevision") != seed["sourceRevision"]
+            or item.get("variantKey") != seed.get("variantKey", "default")
+            or candidate_id != "spn_" + _hash([seed["recipe"], seed["sourceRef"],
+                                              seed.get("variantKey", "default"), seed["seedId"]])[:24]
+            or type(item.get("revision")) is not int or item["revision"] < 1
+            or item.get("contentHash") != _hash(item.get("content"))
+            or validate_content(item["recipe"], item.get("content"))
+            or not history or history[-1].get("after") != item):
+        raise ValueError("TEXT_REVIEW_SNAPSHOT_MISMATCH")
+    request = seed["request"]
+    if (not all(_text(request.get(k)) for k in ("objective", "construct", "responseBranch"))
+            or not _texts(request.get("constraints"))):
+        raise ValueError("TEXT_REVIEW_BRIEF_INCOMPLETE")
+    before = history[-1].get("before")
+    claims = []
+    old = before["content"] if before else {}
+    for field in sorted(item["content"].keys() | old.keys()):
+        present = field in item["content"]
+        value = item["content"].get(field)
+        claims.append({"fieldPath": "/content/" + field, "present": present,
+                       "valueDigest": _hash(value) if present else None,
+                       "previousValueDigest": _hash(old[field]) if field in old else None,
+                       "changed": (not present or field not in old or old[field] != value)
+                                  if before else None})
+    quality = item.get("generatedContentQuality") or {}
+    bound = all(quality.get(k) == item[k] for k in ("candidateId", "revision", "contentHash"))
+    if not bound:
+        quality = _candidate_quality(item, {"generation": "NOT_VERIFIED"},
+                                     ["GENERATED_QUALITY_BINDING_STALE"])
+    packet = {
+        "candidateId": candidate_id, "seedId": item["seedId"], "recipe": item["recipe"],
+        "sourceRef": item["sourceRef"], "sourceRevision": item["sourceRevision"],
+        "candidateRevision": item["revision"], "contentHash": item["contentHash"],
+        "objective": request["objective"], "construct": request["construct"],
+        "responseBranch": request["responseBranch"],
+        "responseConstraints": request["constraints"],
+        "stimulus": {key: item["content"][key] for key in fields[item["recipe"]]},
+    }
+    evidence = {
+        "candidateId": candidate_id, "revision": item["revision"], "contentHash": item["contentHash"],
+        "claims": claims,
+        "changedFields": [c["fieldPath"] for c in claims if c["changed"] is True],
+        "unchangedFields": [c["fieldPath"] for c in claims if c["changed"] is False],
+        "generatedContentQuality": quality,
+        "qualityBinding": "PASS" if bound else "NOT_VERIFIED",
+        "unresolvedEvidence": list(UNRESOLVED),
+        "issues": sorted(set(quality.get("issues", []))),
+        "status": "HOLD", "publicationEligible": False,
+    }
+    return deepcopy({"blindPacket": packet, "mechanicalEvidence": evidence})
+
+
 def _check_generated(item: dict, contract: Draft202012Validator | None,
                      media_root: str | None) -> tuple[dict[str, str], list[str]]:
     recipe, content = item["recipe"], item["content"]
