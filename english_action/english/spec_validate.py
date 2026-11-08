@@ -499,6 +499,93 @@ class Validator:
             return
         self.warnings.append(Issue(rel.as_posix(), 1, code, message))
 
+
+    def exam_catalog_locks(self) -> None:
+        """Verify versioned exam inventory contracts, never learner scoring."""
+        path = self.root / "knowledge/features/exam-preparation/catalog/spec.md"
+        if not path.is_file():
+            return  # Synthetic Spec Kit callers may have no exam catalog.
+        lines = self.read(path)
+        if lines is None:
+            return
+
+        def table(header: str) -> list[list[str]]:
+            try:
+                start = lines.index(header)
+            except ValueError:
+                self.emit(path, 1, "EXAM_CATALOG_TABLE_MISSING", f"Missing catalog table: {header}")
+                return []
+            rows: list[list[str]] = []
+            for line in lines[start + 1:]:
+                if not line.startswith("|"):
+                    break
+                cells = [part.strip().replace("**", "") for part in line.strip("|").split("|")]
+                if all(set(cell) <= set(":- ") for cell in cells):
+                    continue
+                rows.append(cells)
+            return rows
+
+        offerings = table("| Family | Offering | Reused format owner | Distinct obligation |")
+        owners = {
+            ("IELTS", "IELTS Academic"): "IELTS Academic",
+            ("IELTS", "IELTS General Training"): "IELTS General Training",
+            ("IELTS", "IELTS Academic for UKVI"): "IELTS Academic",
+            ("TOEIC", "TOEIC Listening & Reading"): "TOEIC L&R",
+            ("TOEIC", "TOEIC Speaking & Writing"): "TOEIC S&W",
+            ("PTE", "PTE Academic"): "PTE Academic version",
+            ("PTE", "PTE Core"): "PTE Core version",
+            ("PTE", "PTE Academic UKVI"): "PTE Academic version",
+        }
+        actual = {(row[0], row[1]): row[2] for row in offerings if len(row) == 4}
+        if len(offerings) != 8 or len(actual) != 8 or actual != owners:
+            self.emit(path, 1, "EXAM_OFFERING_DRIFT",
+                      "Expected three families, eight offerings and correct format reuse")
+
+        academic = table("| Section | Code | Pearson question type | InteractionKind | Scored skills |")
+        by_code = {row[1]: row for row in academic if len(row) == 5}
+        sections = {section: sum(row[0] == section for row in academic)
+                    for section in ("Speaking & Writing", "Reading", "Listening")}
+        if len(academic) != 22 or len(by_code) != 22 or sections != {
+                "Speaking & Writing": 9, "Reading": 5, "Listening": 8}:
+            self.emit(path, 1, "EXAM_ACADEMIC_INVENTORY_DRIFT",
+                      "Updated PTE Academic requires 22 distinct tasks across 9/5/8 sections")
+        protected = {
+            "RA": ("Speaking & Writing", "speech_response", "Speaking"),
+            "ASQ": ("Speaking & Writing", "speech_response", "Listening"),
+            "SGD": ("Speaking & Writing", "speech_response", "Listening + Speaking"),
+            "RTS": ("Speaking & Writing", "speech_response", "Speaking"),
+            "FIB-D": ("Reading", "fill_blank", "Reading"),
+            "FIB-L": ("Listening", "fill_blank", "Listening"),
+        }
+        for code, (section, interaction, skills) in protected.items():
+            row = by_code.get(code)
+            if row is None or (row[0], row[3].strip(chr(96)), row[4]) != (
+                    section, interaction, skills):
+                self.emit(path, 1, "EXAM_ACADEMIC_VERSION_DRIFT",
+                          f"2025 PTE Academic identity/skill boundary changed: {code}")
+
+        core = table("| Section | Question types | Count |")
+        core_names: dict[str, list[str]] = {}
+        for row in core:
+            if len(row) == 3 and row[0] in ("Speaking & Writing", "Reading", "Listening"):
+                names = [name.strip() for name in row[1].split(";")]
+                core_names[row[0]] = names
+                if not row[2].isdigit() or int(row[2]) != len(names):
+                    self.emit(path, 1, "EXAM_CORE_INVENTORY_DRIFT",
+                              f"Core task count disagrees with named operations: {row[0]}")
+        if {key: len(value) for key, value in core_names.items()} != {
+                "Speaking & Writing": 7, "Reading": 5, "Listening": 7}:
+            self.emit(path, 1, "EXAM_CORE_INVENTORY_DRIFT",
+                      "PTE Core requires independent 19-type 7/5/7 inventory")
+        core_all = [name for names in core_names.values() for name in names]
+        if ("Write Email" not in core_names.get("Speaking & Writing", [])
+                or "Reading & Writing: Fill in the Blanks" not in core_names.get("Reading", [])
+                or any(name in core_all for name in (
+                    "Retell Lecture", "Summarize Group Discussion",
+                    "Highlight Correct Summary", "Write Essay"))):
+            self.emit(path, 1, "EXAM_CORE_TASK_DRIFT",
+                      "Core-only Email/integrated FIB and excluded Academic tasks must remain distinct")
+
     def product_contract_locks(self) -> None:
         """Guard narrow canonical decisions, not arbitrary prose or historical quotes.
 
@@ -542,6 +629,8 @@ class Validator:
                     if not any(line.startswith(heading) for line in scoring_lines):
                         self.emit(scoring, 1, "SCORING_CONTRACT_MISSING",
                                   f"Distinct exam/version scoring section missing: {heading[3:]}")
+
+        self.exam_catalog_locks()
 
     def run(self) -> list[Issue]:
         self.get_inventory()

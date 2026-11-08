@@ -423,6 +423,107 @@ class SpecificationValidatorTests(unittest.TestCase):
                       "PTE Academic versioned policy.\n## 6. PTE Core scoring\n"
                       "PTE Core versioned policy.\n")
 
+
+    def _synthetic_exam_catalog(self) -> None:
+        self._synthetic_product_locks()
+        offerings = [
+            ("IELTS", "IELTS Academic", "IELTS Academic"),
+            ("IELTS", "IELTS General Training", "IELTS General Training"),
+            ("IELTS", "IELTS Academic for UKVI", "IELTS Academic"),
+            ("TOEIC", "TOEIC Listening & Reading", "TOEIC L&R"),
+            ("TOEIC", "TOEIC Speaking & Writing", "TOEIC S&W"),
+            ("PTE", "PTE Academic", "PTE Academic version"),
+            ("PTE", "PTE Core", "PTE Core version"),
+            ("PTE", "PTE Academic UKVI", "PTE Academic version"),
+        ]
+        academic = [
+            ("Speaking & Writing", "RA", "Speaking"),
+            ("Speaking & Writing", "RS", "Listening + Speaking"),
+            ("Speaking & Writing", "DI", "Speaking"),
+            ("Speaking & Writing", "RL", "Listening + Speaking"),
+            ("Speaking & Writing", "ASQ", "Listening"),
+            ("Speaking & Writing", "SGD", "Listening + Speaking"),
+            ("Speaking & Writing", "RTS", "Speaking"),
+            ("Speaking & Writing", "SWT", "Reading + Writing"),
+            ("Speaking & Writing", "WE", "Writing"),
+            ("Reading", "FIB-D", "Reading"),
+            ("Reading", "MCMA-R", "Reading"),
+            ("Reading", "ROP", "Reading"),
+            ("Reading", "FIB-R", "Reading"),
+            ("Reading", "MCSA-R", "Reading"),
+            ("Listening", "SST", "Listening + Writing"),
+            ("Listening", "MCMA-L", "Listening"),
+            ("Listening", "FIB-L", "Listening"),
+            ("Listening", "HCS", "Listening + Reading"),
+            ("Listening", "MCSA-L", "Listening"),
+            ("Listening", "SMW", "Listening"),
+            ("Listening", "HIW", "Listening + Reading"),
+            ("Listening", "WFD", "Listening + Writing"),
+        ]
+        core = [
+            ("Speaking & Writing", "Read Aloud; Repeat Sentence; Describe Image; Respond to a Situation; Answer Short Question; Summarize Written Text; Write Email", 7),
+            ("Reading", "Reading & Writing: Fill in the Blanks; Multiple Choice, Multiple Answers; Reorder Paragraph; Fill in the Blanks; Multiple Choice, Single Answer", 5),
+            ("Listening", "Summarize Spoken Text; Multiple Choice, Multiple Answers; Fill in the Blanks; Multiple Choice, Single Answer; Select Missing Word; Highlight Incorrect Words; Write from Dictation", 7),
+        ]
+        lines = [
+            "# Synthetic Exam Catalog",
+            "| Family | Offering | Reused format owner | Distinct obligation |",
+            "|---|---|---|---|",
+            *(f"| {family} | {offering} | {owner} | Test |" for family, offering, owner in offerings),
+            "",
+            "| Section | Code | Pearson question type | InteractionKind | Scored skills |",
+            "|---|---|---|---|---|",
+            *(f"| {section} | {code} | Task | {chr(96)}{'speech_response' if code in ('RA', 'ASQ', 'SGD', 'RTS') else 'fill_blank' if code in ('FIB-D', 'FIB-L') else 'choice'}{chr(96)} | {skills} |"
+              for section, code, skills in academic),
+            "",
+            "| Section | Question types | Count |",
+            "|---|---|---:|",
+            *(f"| {section} | {names} | {count} |" for section, names, count in core),
+            "",
+        ]
+        self.document("knowledge/features/exam-preparation/catalog/spec.md", "\n".join(lines))
+
+    def test_versioned_exam_catalog_passes_with_eight_offerings(self) -> None:
+        self._synthetic_exam_catalog()
+        result = self.run_cli(product_locks=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_ukvi_cannot_get_an_independent_scoring_owner(self) -> None:
+        self._synthetic_exam_catalog()
+        path = self.root / "knowledge/features/exam-preparation/catalog/spec.md"
+        path.write_text(path.read_text().replace(
+            "| PTE | PTE Academic UKVI | PTE Academic version |",
+            "| PTE | PTE Academic UKVI | PTE UKVI version |"), encoding="utf-8")
+        result = self.run_cli(product_locks=True)
+        self.assertIn("ERROR EXAM_OFFERING_DRIFT:", result.stdout)
+
+    def test_updated_academic_ra_cannot_inherit_core_skill_credit(self) -> None:
+        self._synthetic_exam_catalog()
+        path = self.root / "knowledge/features/exam-preparation/catalog/spec.md"
+        path.write_text(path.read_text().replace(
+            "| RA | Task | " + chr(96) + "speech_response" + chr(96) + " | Speaking |",
+            "| RA | Task | " + chr(96) + "speech_response" + chr(96) + " | Reading + Speaking |"), encoding="utf-8")
+        result = self.run_cli(product_locks=True)
+        self.assertIn("ERROR EXAM_ACADEMIC_VERSION_DRIFT:", result.stdout)
+
+    def test_core_cannot_replace_email_with_academic_essay(self) -> None:
+        self._synthetic_exam_catalog()
+        path = self.root / "knowledge/features/exam-preparation/catalog/spec.md"
+        path.write_text(path.read_text().replace(
+            "Summarize Written Text; Write Email",
+            "Summarize Written Text; Write Essay"), encoding="utf-8")
+        result = self.run_cli(product_locks=True)
+        self.assertIn("ERROR EXAM_CORE_TASK_DRIFT:", result.stdout)
+
+    def test_academic_duplicate_code_fails_inventory(self) -> None:
+        self._synthetic_exam_catalog()
+        path = self.root / "knowledge/features/exam-preparation/catalog/spec.md"
+        path.write_text(path.read_text().replace(
+            "| Reading | FIB-D | Task |",
+            "| Reading | RA | Task |"), encoding="utf-8")
+        result = self.run_cli(product_locks=True)
+        self.assertIn("ERROR EXAM_ACADEMIC_INVENTORY_DRIFT:", result.stdout)
+
     def test_canonical_product_locks_accept_approved_markers_and_historical_quotes(self) -> None:
         self._synthetic_product_locks()
         path = self.root / "knowledge/product/decisions.md"
