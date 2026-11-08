@@ -197,6 +197,13 @@ def record_n2_decision(state: dict, decision_id: str, assessment: dict) -> tuple
         raise ValueError("INVALID_DECISION_ID")
     if assessment.get("outcome") not in ("ELIGIBLE", "HOLD", "REJECTED"):
         raise ValueError("INVALID_DECISION")
+    immutable = deepcopy(assessment)
+    proof = _hash(immutable)
+    previous = state.get("qualityDecisions", {}).get(decision_id)
+    if previous:
+        if previous["digest"] != proof:
+            return state, {"status": "conflict", "code": "DECISION_ID_CONFLICT"}
+        return state, {"status": "replayed", "decisionId": decision_id, "digest": proof}
     binding = assessment.get("binding")
     candidate = state.get("candidates", {}).get(binding.get("candidateId")) if isinstance(binding, dict) else None
     if (not isinstance(candidate, dict)
@@ -210,13 +217,6 @@ def record_n2_decision(state: dict, decision_id: str, assessment: dict) -> tuple
          and (not isinstance(consumer, dict) or consumer.get("binding") != binding))
         or (assessment["outcome"] != "ELIGIBLE" and consumer is not None)):
         return state, {"status": "conflict", "code": "DECISION_CONSUMER_INVALID"}
-    immutable = deepcopy(assessment)
-    proof = _hash(immutable)
-    previous = state.get("qualityDecisions", {}).get(decision_id)
-    if previous:
-        if previous["digest"] != proof:
-            return state, {"status": "conflict", "code": "DECISION_ID_CONFLICT"}
-        return state, {"status": "replayed", "decisionId": decision_id, "digest": proof}
     output = deepcopy(state)
     output.setdefault("qualityDecisions", {})[decision_id] = {"digest": proof, "assessment": immutable}
     output.setdefault("qualityDecisionHistory", []).append({"action": "content_quality_decision",
