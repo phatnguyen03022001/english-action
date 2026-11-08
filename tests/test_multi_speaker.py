@@ -25,7 +25,8 @@ def dialogue(turns, three=False):
     return {"source": {"sourceRef": "synthetic:reviewed-script", "sourceRevision": 1,
                        "contentRevision": 1, "objective": "synthetic ordering",
                        "construct": "multi-speaker test only",
-                       "dependencies": ["synthetic:ancestor"]},
+                       "dependencies": ["synthetic:ancestor"],
+                       "transcript": " ".join(text for _, text, _ in turns)},
             "speakers": speakers,
             "settings": {"edgeTtsVersion": "test-pinned", "rate": "+0%",
                          "pitch": "+0Hz", "volume": "+0%"},
@@ -119,6 +120,7 @@ class DialogueAssemblyTests(unittest.TestCase):
         changed = deepcopy(spec)
         changed["source"]["contentRevision"] += 1
         changed["utterances"][1]["text"] = "Two revised"
+        changed["source"]["transcript"] = "One Two revised"
         second = self.build(changed, "revision2")
         self.assertEqual(len(self.calls), 3)
         self.assertNotEqual(first["binding"], second["binding"])
@@ -160,6 +162,23 @@ class DialogueAssemblyTests(unittest.TestCase):
         next(self.cache.glob("*.wav")).unlink()
         with self.assertRaisesRegex(ValueError, "CACHED_AUDIO_MISSING"):
             self.build(spec, "missing")
+
+    def test_removed_middle_turn_rejected_against_reviewed_transcript(self):
+        spec = dialogue([("A", "First", 0), ("B", "Second", 0),
+                         ("A", "Third", 0)])
+        removed = spec["utterances"].pop(1)
+        self.assertEqual(removed["text"], "Second")
+        spec["utterances"][1]["order"] = 2
+        with self.assertRaisesRegex(ValueError, "TRANSCRIPT_UTTERANCES_MISMATCH"):
+            self.build(spec, "missing-turn")
+        self.assertFalse(self.calls)
+
+    def test_modified_utterance_without_reviewed_transcript_change_rejected(self):
+        spec = dialogue([("A", "First", 0), ("B", "Second", 0)])
+        spec["utterances"][0]["text"] = "Wrong"
+        with self.assertRaisesRegex(ValueError, "TRANSCRIPT_UTTERANCES_MISMATCH"):
+            self.build(spec, "unreviewed-turn")
+        self.assertFalse(self.calls)
 
     def test_duplicate_id_and_wrong_sequence_rejected(self):
         spec = dialogue([("A", "One", 0), ("B", "Two", 0)])
@@ -233,6 +252,7 @@ class DialogueAssemblyTests(unittest.TestCase):
         revised = deepcopy(original)
         revised["source"]["contentRevision"] += 1
         revised["utterances"][1]["text"] = "New two"
+        revised["source"]["transcript"] = "Old one New two"
         def fail(turn, speaker, settings, dest):
             raise ValueError("mock provider failure")
         with patch.object(ms, "_render", side_effect=fail):

@@ -36,14 +36,15 @@ def _validate(spec):
         raise ValueError("DIALOGUE_FIELDS_INVALID")
     src, speakers, turns, settings = (spec[k] for k in ("source", "speakers", "utterances", "settings"))
     if not isinstance(src, dict) or set(src) != {
-            "sourceRef", "sourceRevision", "contentRevision", "objective", "construct", "dependencies"}:
+            "sourceRef", "sourceRevision", "contentRevision", "objective", "construct", "dependencies", "transcript"}:
         raise ValueError("SOURCE_INVALID")
     if (not all(isinstance(src[k], str) and src[k].strip() for k in
                 ("sourceRef", "objective", "construct"))
             or any(type(src[k]) is not int or src[k] < 1
                    for k in ("sourceRevision", "contentRevision"))
             or not isinstance(src["dependencies"], list)
-            or any(not isinstance(d, str) or not d.strip() for d in src["dependencies"])):
+            or any(not isinstance(d, str) or not d.strip() for d in src["dependencies"])
+            or not isinstance(src["transcript"], str) or not src["transcript"].strip()):
         raise ValueError("SOURCE_INVALID")
     if not isinstance(speakers, dict) or not 2 <= len(speakers) <= 5:
         raise ValueError("SPEAKERS_INVALID")
@@ -87,6 +88,8 @@ def _validate(spec):
         raise ValueError("DIALOGUE_TOO_LARGE")
     if len({t["speaker"] for t in turns}) < 2:
         raise ValueError("SPEAKER_TURNS_MISSING")
+    if src["transcript"] != " ".join(turn["text"] for turn in turns):
+        raise ValueError("TRANSCRIPT_UTTERANCES_MISMATCH")
 
 
 def _read_pcm(path):
@@ -104,8 +107,7 @@ def _read_pcm(path):
         pcm = stream.readframes(frames)
     if frames == 0 or frames > _RATE * _MAX_SECONDS:
         raise ValueError("AUDIO_DURATION_INVALID")
-    values = [v[0] for v in struct.iter_unpack("<h", pcm)]
-    rms = math.sqrt(sum(s * s for s in values) / len(values))
+    rms = math.sqrt(sum(v[0] * v[0] for v in struct.iter_unpack("<h", pcm)) / frames)
     if rms < 50:
         raise ValueError("AUDIO_TOO_QUIET")
     return data, pcm, frames, rms
@@ -237,9 +239,9 @@ def assemble_dialogue(spec, output, cache_dir):
     issues = _media_bytes_issues(final_data, ".wav", "audio")
     if issues:
         raise ValueError("ASSEMBLED_AUDIO_INVALID:" + ",".join(issues))
-    src = {**spec["source"], "content": {
-        "transcript": " ".join(t["text"] for t in spec["utterances"]),
-        "speakers": spec["speakers"], "utterances": spec["utterances"]}}
+    src = {k: v for k, v in spec["source"].items() if k != "transcript"}
+    src["content"] = {"transcript": spec["source"]["transcript"],
+                      "speakers": spec["speakers"], "utterances": spec["utterances"]}
     asset = {"logicalId": "dialogue:" + _digest({"source": src, "settings": spec["settings"]})[:24],
              "revision": spec["source"]["contentRevision"], "mediaType": "audio",
              "sha256": sha256(final_data).hexdigest(), "storage": "local-fixture",
