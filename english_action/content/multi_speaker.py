@@ -86,10 +86,10 @@ def _validate(spec):
         ids.add(turn["id"])
     if sum(len(t["text"]) for t in turns) > 8000:
         raise ValueError("DIALOGUE_TOO_LARGE")
-    if len({t["speaker"] for t in turns}) < 2:
-        raise ValueError("SPEAKER_TURNS_MISSING")
     if src["transcript"] != " ".join(turn["text"] for turn in turns):
         raise ValueError("TRANSCRIPT_UTTERANCES_MISMATCH")
+    if len({t["speaker"] for t in turns}) < 2:
+        raise ValueError("SPEAKER_TURNS_MISSING")
 
 
 def _read_pcm(path):
