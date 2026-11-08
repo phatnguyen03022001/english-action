@@ -64,3 +64,28 @@ The JSON sidecar carries the existing asset fields (identity, revision, checksum
 **Real publication eligibility:** This CLI has no independently authenticated owner-appointment, evidence and rights provider. `promote` and positive publication eligibility are therefore deliberately blocked, even when isolated synthetic test callbacks establish a valid domain claim. The `QUALITY_PARITY_NOT_VERIFIED` guard is retained as a conservative production-publication lock, **not** as a claim that private technical test execution did not occur. Neither a passed schema check nor a technically migrated Engine authorizes actual content publication. Do not remove this guard without independent authority integration, a separately verified security boundary and Human Owner approval.
 
 Source code and private data have distinct owners: `english-action` publishes only reusable public-safe Python code and tests; `english-content` owns schemas, datasets, evidence, editorial policy, publication metadata and confidential fixtures.
+
+## CONTENT-QUALITY-02: bounded AI-only N2-06 eligibility
+
+`english_action.content.eligibility.assess_n2_cloze(state, batch, candidate_id, ...)`
+uses the **existing persisted Spawn state and `prepare_text_review`**; it never
+calls a learner model or creates a new worker. An independently executed QA actor
+must solve the frozen blind packet before key exposure. Its separate-run provenance,
+blind packet digest and revision/hash must be verified through `verify_qa`; a
+signed-looking JSON assertion alone is not authentication.
+
+The caller supplies external trusted verification callbacks for generation origin,
+Owner-approved policy, every material claim/source, intended-use/output rights,
+dependency closure and any referenced dependencies. All missing, disputed or stale
+evidence results in `HOLD` with no consumer snapshot. The `ELIGIBLE` result exists
+only for the exact content/evidence/policy bindings; it **does not** activate a
+publisher, replace external source/rights review or issue a human sign-off.
+`record_n2_decision` is a pure append-only/idempotent history transformation;
+the private caller owns durable storage. This is **not** a general schema,
+parallel quality engine, runtime AI feature or learner-response evaluator.
+
+The synthetic public positive test uses explicit **synthetic-only verifier stubs**
+and is never valid publication evidence. The real private `cloze-01` candidate
+is `HOLD` with no authentic QA run/rights clearance. The historical V2 lexical
+`promote` flow, appointment checks and `QUALITY_PARITY_NOT_VERIFIED` lock remain
+intact for backward compatibility and deny unauthorized publication.
