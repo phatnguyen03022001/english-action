@@ -197,6 +197,19 @@ def record_n2_decision(state: dict, decision_id: str, assessment: dict) -> tuple
         raise ValueError("INVALID_DECISION_ID")
     if assessment.get("outcome") not in ("ELIGIBLE", "HOLD", "REJECTED"):
         raise ValueError("INVALID_DECISION")
+    binding = assessment.get("binding")
+    candidate = state.get("candidates", {}).get(binding.get("candidateId")) if isinstance(binding, dict) else None
+    if (not isinstance(candidate, dict)
+            or candidate.get("revision") != binding.get("candidateRevision")
+            or candidate.get("contentHash") != binding.get("contentHash")
+            or candidate.get("sourceRevision") != binding.get("sourceRevision")
+            or candidate.get("status") != "HOLD"):
+        return state, {"status": "conflict", "code": "DECISION_REVISION_STALE"}
+    consumer = assessment.get("consumerSnapshot")
+    if ((assessment["outcome"] == "ELIGIBLE"
+         and (not isinstance(consumer, dict) or consumer.get("binding") != binding))
+        or (assessment["outcome"] != "ELIGIBLE" and consumer is not None)):
+        return state, {"status": "conflict", "code": "DECISION_CONSUMER_INVALID"}
     immutable = deepcopy(assessment)
     proof = _hash(immutable)
     previous = state.get("qualityDecisions", {}).get(decision_id)
@@ -206,7 +219,7 @@ def record_n2_decision(state: dict, decision_id: str, assessment: dict) -> tuple
         return state, {"status": "replayed", "decisionId": decision_id, "digest": proof}
     output = deepcopy(state)
     output.setdefault("qualityDecisions", {})[decision_id] = {"digest": proof, "assessment": immutable}
-    output.setdefault("history", []).append({"action": "content_quality_decision",
+    output.setdefault("qualityDecisionHistory", []).append({"action": "content_quality_decision",
                                                "decisionId": decision_id, "digest": proof,
                                                "binding": deepcopy(assessment.get("binding"))})
     return output, {"status": "recorded", "decisionId": decision_id, "digest": proof}

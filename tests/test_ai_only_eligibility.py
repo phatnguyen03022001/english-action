@@ -126,6 +126,17 @@ class N2EligibilityTests(unittest.TestCase):
         _, conflict = record_n2_decision(updated, "synthetic-1",
                                          {**accepted, "outcome": "HOLD"})
         self.assertEqual(conflict["code"], "DECISION_ID_CONFLICT")
+        # Recording eligibility is orthogonal to the existing Spawn candidate
+        # history. It must not break prepare_text_review or a subsequent check.
+        self.state = updated
+        self.assertEqual(self.assess()["outcome"], "ELIGIBLE")
+        self.assertEqual(len(updated["history"]), 1)
+        self.assertEqual(len(updated["qualityDecisionHistory"]), 1)
+        stale = deepcopy(accepted)
+        stale["binding"]["candidateRevision"] = 9
+        _, rejected = record_n2_decision(updated, "synthetic-new", stale)
+        self.assertEqual(rejected["code"], "DECISION_REVISION_STALE")
+
 
 
 if __name__ == "__main__":
