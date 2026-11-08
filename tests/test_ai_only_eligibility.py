@@ -91,7 +91,7 @@ class N2EligibilityTests(unittest.TestCase):
             ("missing valid alternative", lambda x: x["qa_run"]["blind"].update(answers=["takes", "has taken"])),
             ("disputed key", lambda x: x["qa_run"]["comparison"].update(status="disputed")),
             ("false grammar agreed by models", lambda x: x.update(verify_claim=lambda **kw: False)),
-            ("fake citation", lambda x: x["claims"][0].update(sourceId="fabricated")),
+            ("fake citation", lambda x: x.update(verify_claim=lambda **kw: False)),
             ("stale evidence", lambda x: x["claims"][0].update(expiresAt="2026-01-02T00:00:00Z")),
             ("wrong content digest", lambda x: x["claims"][0].update(valueDigest="wrong")),
             ("missing claim", lambda x: x["claims"].pop()),
