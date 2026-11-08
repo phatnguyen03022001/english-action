@@ -184,6 +184,13 @@ class EngineTest(unittest.TestCase):
         self.assertIn("SOURCE_RIGHTS_UNVERIFIED", [x["code"] for x in revoked["issues"]])
         self.assertFalse(revoked["eligible"])
         source["rights"].pop("revokedAt")
+        source["lifecycleStatus"] = "retired"
+        retired_source = evaluate_publication(records, trust)
+        self.assertIn("SOURCE_RIGHTS_UNVERIFIED", [x["code"] for x in retired_source["issues"]])
+        self.assertFalse(retired_source["eligible"])
+        source["lifecycleStatus"] = "active"
+        self.assertEqual([x["code"] for x in evaluate_publication(records, trust)["issues"]],
+                         ["QUALITY_PARITY_NOT_VERIFIED"])
         trust["verify_owner_attestation"] = lambda **kwargs: False
         invalid = evaluate_publication(records, trust)
         self.assertIn("LER_AUTHORITY_UNVERIFIED", [x["code"] for x in invalid["issues"]])

@@ -740,16 +740,21 @@ def reviewer_appointed(options: Mapping[str, Any], reviewer_id: str, role: str, 
     for appointment in appointments:
         if not isinstance(appointment, dict) or any((appointment.get("appointmentKey") != reference, appointment.get("reviewerId") != reviewer_id, appointment.get("role") != role, appointment.get("appointedByOwnerId") != owner, owner == reviewer_id, not appointment.get("ownerAttestationRef"))):
             continue
-        scope = appointment.get("scope") or {}
-        if subject_id not in scope.get("subjectIds", ()):
+        scope = appointment.get("scope")
+        if (not isinstance(scope, dict) or not isinstance(scope.get("subjectIds"), list)
+                or subject_id not in scope["subjectIds"]):
             continue
-        if "fieldPaths" in scope and field_path not in scope["fieldPaths"]:
+        if "fieldPaths" in scope and (not isinstance(scope["fieldPaths"], list)
+                                      or field_path not in scope["fieldPaths"]):
             continue
         since = _parse_time(appointment.get("effectiveFrom"))
         until = _parse_time(appointment.get("effectiveUntil")) if "effectiveUntil" in appointment else None
         revoked = _parse_time(appointment.get("revokedAt")) if appointment.get("revokedAt") else None
         try:
-            inactive = not since or now < since or ("effectiveUntil" in appointment and (not until or now > until)) or (revoked and now >= revoked)
+            inactive = (not since or now < since
+                        or ("effectiveUntil" in appointment and (not until or now >= until))
+                        or (appointment.get("revokedAt") is not None and not revoked)
+                        or (revoked and now >= revoked))
         except TypeError:
             inactive = True
         if inactive:
@@ -865,7 +870,10 @@ def evaluate_publication(records: list[dict], options: Mapping[str, Any] | None 
     def rights(ev):
         source = by_id.get(ev.get("sourceId")) or {}
         r = source.get("rights") or {}
-        if r.get("status") != "redistributable" or opts.get("usage_scope", "dictionary_publication") not in r.get("scopes", ()) or not r.get("reviewerId") or r.get("revokedAt"):
+        if (source.get("lifecycleStatus") != "active"
+                or r.get("status") != "redistributable"
+                or opts.get("usage_scope", "dictionary_publication") not in r.get("scopes", ())
+                or not r.get("reviewerId") or r.get("revokedAt")):
             return False
         expiry = _parse_time(r.get("expiresAt")) if r.get("expiresAt") else None
         now = _parse_time(opts.get("effective_at"))

@@ -85,6 +85,21 @@ class EdgeTests(unittest.TestCase):
         appointment.pop("revokedAt")
         self.assertFalse(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/pos"))
         self.assertTrue(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/lemma"))
+        appointment["revokedAt"] = "not-a-date"
+        self.assertFalse(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/lemma"))
+        appointment["revokedAt"] = ""
+        self.assertFalse(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/lemma"))
+        appointment.pop("revokedAt")
+        appointment["effectiveUntil"] = opts["effective_at"]
+        self.assertFalse(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/lemma"))
+        appointment.pop("effectiveUntil")
+        for bad_scope in (None, [], {"subjectIds": subject["_id"]},
+                          {"subjectIds": [subject["_id"]], "fieldPaths": "/lemma"}):
+            appointment["scope"] = bad_scope
+            self.assertFalse(reviewer_appointed(opts, "editor", "lead_editorial", "a",
+                                                subject["_id"], "/lemma"))
+        appointment["scope"] = {"subjectIds": [subject["_id"]], "fieldPaths": ["/lemma"]}
+        self.assertTrue(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/lemma"))
         opts["verify_owner_attestation"] = lambda **_kw: (_ for _ in ()).throw(RuntimeError("auth offline"))
         self.assertFalse(reviewer_appointed(opts, "editor", "lead_editorial", "a", subject["_id"], "/lemma"))
 
