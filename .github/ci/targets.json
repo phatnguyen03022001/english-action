@@ -12,7 +12,7 @@
     },
     "english-content": {
       "baseline": "4e72321f5ab6b96f621925a8195ac69a550cfe6b",
-      "pin": "dece409400452720dff7afd3dad75cf7d20ec92c",
+      "pin": "7aeb26911842f35e5ad1801761d2c3234176799b",
       "suites": [
         "content-quality",
         "spawn-draft"
