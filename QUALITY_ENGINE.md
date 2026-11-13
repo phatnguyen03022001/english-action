@@ -69,10 +69,12 @@ Source code and private data have distinct owners: `english-action` publishes on
 
 `english_action.content.eligibility.assess_n2_cloze(state, batch, candidate_id, ...)`
 uses the **existing persisted Spawn state and `prepare_text_review`**; it never
-calls a learner model or creates a new worker. An independently executed QA actor
-must solve the frozen blind packet before key exposure. Its separate-run provenance,
-blind packet digest and revision/hash must be verified through `verify_qa`; a
-signed-looking JSON assertion alone is not authentication.
+calls a learner model or creates a new worker. One meaningful independent AI evaluation of the frozen revision can suffice:
+`qa_run.evaluation` records the reviewed answer set, substantive grammar,
+answer-completeness, Vietnamese-explanation and suitability findings. A blind
+first solution followed by keyed comparison remains supported but is **optional**.
+Either path needs authenticated separate-run provenance, packet digest, exact
+revision/hash and a trusted `verify_qa` callback; a JSON assertion is not proof.
 
 The caller supplies external trusted verification callbacks for generation origin,
 Owner-approved policy, every material claim/source, intended-use/output rights,
@@ -83,6 +85,13 @@ publisher, replace external source/rights review or issue a human sign-off.
 `record_n2_decision` is a pure append-only/idempotent history transformation;
 the private caller owns durable storage. This is **not** a general schema,
 parallel quality engine, runtime AI feature or learner-response evaluator.
+
+For N2-06, content corrections are counted against the stable logical
+`sourceRef`, including regenerated IDs and revisions. `generate(state=...)`
+preflights the two-correction budget before provider invocation, and
+`persist` independently blocks a third changed revision. Callers must preserve
+that logical source reference across retries; changed references without
+authenticated lineage cannot establish a cross-reference correction history.
 
 The synthetic public positive test uses explicit **synthetic-only verifier stubs**
 and is never valid publication evidence. The real private `cloze-01` candidate

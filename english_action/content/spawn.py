@@ -55,6 +55,26 @@ def _hash(value: Any) -> str:
     return sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _n2_correction_rounds(history: list[dict], source_ref: str) -> tuple[int, str | None]:
+    """Count content changes across IDs/revisions sharing one logical source reference.
+
+    Missing or damaged matching history is not a trustworthy correction ledger.
+    """
+    previous_hash = None
+    rounds = 0
+    for event in history:
+        after = event.get("after") if isinstance(event, dict) else None
+        if not isinstance(after, dict) or after.get("sourceRef") != source_ref:
+            continue
+        content_hash = after.get("contentHash")
+        if not isinstance(content_hash, str) or content_hash != _hash(after.get("content")):
+            raise ValueError("CORRECTION_LINEAGE_UNVERIFIED")
+        if previous_hash is not None and content_hash != previous_hash:
+            rounds += 1
+        previous_hash = content_hash
+    return rounds, previous_hash
+
+
 def _text(x: Any) -> bool:
     return isinstance(x, str) and bool(x.strip()) and len(x) <= 10000
 
@@ -627,8 +647,16 @@ def _check_batch(batch: Any) -> None:
 async def generate(batch: dict, worker: Worker, *, concurrency: int = 3,
                    timeout: float = 30, retries: int = 1,
                    contract: Draft202012Validator | None = None,
-                   media_root: str | None = None) -> list[dict]:
+                   media_root: str | None = None,
+                   state: dict | None = None) -> list[dict]:
     _check_batch(batch)
+    if state is not None:
+        for seed in batch["seeds"]:
+            if seed["recipe"] == "N2-06":
+                used, previous_hash = _n2_correction_rounds(state.get("history", []),
+                                                              seed["sourceRef"])
+                if previous_hash is not None and used >= 2:
+                    raise ValueError("CORRECTION_ROUND_LIMIT")
     if not 1 <= concurrency <= 16 or not 0 < timeout <= 120 or not 0 <= retries <= 3:
         raise ValueError("Unbounded concurrency, timeout or retry configuration")
     semaphore = asyncio.Semaphore(concurrency)
@@ -774,6 +802,17 @@ def persist(batch: dict, generated: list[dict], path: str, quality: dict) -> dic
             revision = expected + 1
             next_item = {**item, "revision": revision, "content": content, "contentHash": _hash(content),
                          "rights": rights}
+            if item["recipe"] == "N2-06":
+                try:
+                    used, previous_hash = _n2_correction_rounds(state["history"], item["sourceRef"])
+                except ValueError:
+                    statuses.append({**entry, "status": "REJECTED",
+                                     "issues": ["CORRECTION_LINEAGE_UNVERIFIED"]})
+                    continue
+                if previous_hash is not None and previous_hash != next_item["contentHash"] and used >= 2:
+                    statuses.append({**entry, "status": "REJECTED",
+                                     "issues": ["CORRECTION_ROUND_LIMIT"]})
+                    continue
             if (evidence["candidateId"] != identifier or evidence["revision"] != revision
                     or evidence["contentHash"] != next_item["contentHash"]):
                 evidence = _candidate_quality(next_item, {"generation": "NOT_VERIFIED"}, [])
@@ -849,7 +888,7 @@ def run(argv: list[str] | None = None) -> int:
         quality = check_quality(opts.schemas, opts.quality_input)
         result = asyncio.run(generate(batch, worker, concurrency=opts.concurrency,
                                       timeout=opts.timeout, retries=opts.retries, contract=validator,
-                                      media_root=opts.media_root))
+                                      media_root=opts.media_root, state=existing))
         report = persist(batch, result, opts.state, quality)
         print(_canonical(report))
         return 0 if report["rejected"] == 0 else 1

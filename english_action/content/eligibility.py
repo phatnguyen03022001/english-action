@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Callable
 
-from .spawn import _hash, prepare_text_review, validate_content
+from .spawn import _hash, _n2_correction_rounds, prepare_text_review, validate_content
 
 _FIELDS = ("context", "prompt", "key", "alternatives", "rationale")
 _USE = "foundation_p0a_text"
@@ -51,8 +51,8 @@ def assess_n2_cloze(state: dict, batch: dict, candidate_id: str, *,
                     verify_dependency: Callable | None = None) -> dict:
     """Evaluate an exact persisted revision; missing external trust means HOLD.
 
-    QA verifier authenticates a separate blind-before-keyed execution, not merely
-    a JSON record claiming independence. ELIGIBLE is not publication permission.
+    QA verifier authenticates a separate meaningful evaluation (blind optional),
+    not merely a JSON record claiming independence. ELIGIBLE is not publication permission.
     """
     reasons: list[str] = []
     binding = {"candidateId": candidate_id, "recipe": "N2-06", "useScope": _USE}
@@ -71,11 +71,13 @@ def assess_n2_cloze(state: dict, batch: dict, candidate_id: str, *,
     if validate_content("N2-06", item["content"]):
         return {"outcome": "REJECTED", "reasons": ["CONTENT_STRUCTURALLY_INVALID"],
                 "binding": binding, "consumerSnapshot": None, "qaRunId": None, "evidenceIds": []}
-    corrections = sum(1 for event in state.get("history", [])
-                      if event.get("candidateId") == candidate_id and event.get("before") is not None
-                      and event.get("after") != event.get("before"))
-    if corrections > 2:
-        reasons.append("CORRECTION_ROUND_LIMIT")
+    try:
+        corrections, _ = _n2_correction_rounds(state.get("history", []), item["sourceRef"])
+        binding["correctionRoundsUsed"] = corrections
+        if corrections > 2:
+            reasons.append("CORRECTION_ROUND_LIMIT")
+    except (ValueError, TypeError):
+        reasons.append("CORRECTION_LINEAGE_UNVERIFIED")
     if (item.get("provenance", {}).get("mode") != "real_ai"
             or not _trusted(verify_generation, candidate=item, binding=binding)):
         reasons.append("GENERATOR_PROVENANCE_UNVERIFIED")
@@ -96,24 +98,43 @@ def assess_n2_cloze(state: dict, batch: dict, candidate_id: str, *,
     else:
         blind = qa_run.get("blind")
         comparison = qa_run.get("comparison")
+        evaluation = qa_run.get("evaluation")
         proposed = [item["content"]["key"], *item["content"]["alternatives"]]
-        solutions = blind.get("answers") if isinstance(blind, dict) else None
+        # A single keyed evaluation is sufficient when authenticated and meaningful.
+        # Keep the historical blind-before-keyed packet as an optional stricter path.
+        if isinstance(evaluation, dict) and blind is None and comparison is None:
+            solutions = evaluation.get("answers")
+            checks = evaluation.get("checks")
+            qa_content_valid = (
+                evaluation.get("status") == "supported"
+                and evaluation.get("uncertain") is False
+                and isinstance(evaluation.get("reasoning"), str)
+                and bool(evaluation["reasoning"].strip())
+                and isinstance(checks, dict)
+                and all(isinstance(checks.get(k), str) and bool(checks[k].strip())
+                        for k in ("linguisticCorrectness", "answerCompleteness",
+                                  "vietnameseExplanation", "suitability")))
+        else:
+            solutions = blind.get("answers") if isinstance(blind, dict) else None
+            qa_content_valid = (
+                isinstance(blind, dict)
+                and isinstance(blind.get("reasoning"), str) and bool(blind["reasoning"].strip())
+                and blind.get("uncertain") is False
+                and isinstance(comparison, dict)
+                and comparison.get("status") == "supported"
+                and comparison.get("key") == item["content"]["key"]
+                and comparison.get("alternatives") == item["content"]["alternatives"]
+                and isinstance(comparison.get("reasoning"), str)
+                and bool(comparison["reasoning"].strip()))
         valid = (qa_run.get("candidateId") == candidate_id
                  and qa_run.get("candidateRevision") == item["revision"]
                  and qa_run.get("contentHash") == item["contentHash"]
                  and qa_run.get("blindPacketDigest") == _hash(packet)
                  and qa_run.get("sourceRevision") == item["sourceRevision"]
                  and qa_run.get("actorKind") == "ai" and qa_run.get("independence") == "separate_run"
+                 and qa_content_valid
                  and isinstance(solutions, list) and bool(solutions)
                  and all(isinstance(s, str) and s.strip() for s in solutions)
-                 and isinstance(blind.get("reasoning"), str) and bool(blind["reasoning"].strip())
-                 and blind.get("uncertain") is False
-                 and isinstance(comparison, dict)
-                 and comparison.get("status") == "supported"
-                 and comparison.get("key") == item["content"]["key"]
-                 and comparison.get("alternatives") == item["content"]["alternatives"]
-                 and isinstance(comparison.get("reasoning"), str)
-                 and bool(comparison["reasoning"].strip())
                  and {s.strip() for s in solutions} == {s.strip() for s in proposed}
                  and _trusted(verify_qa, qa_run=qa_run, blind_packet=packet,
                               keyed_content=item["content"]))

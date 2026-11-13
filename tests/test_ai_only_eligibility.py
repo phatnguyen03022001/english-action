@@ -1,8 +1,12 @@
 """Synthetic authority-adapter tests; never evidence of real QA or rights."""
+import asyncio
 from copy import deepcopy
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from english_action.content.eligibility import assess_n2_cloze, record_n2_decision
-from english_action.content.spawn import _hash, prepare_text_review
+from english_action.content.spawn import _hash, generate, persist, prepare_text_review, SyntheticWorker
 
 
 class N2EligibilityTests(unittest.TestCase):
@@ -77,6 +81,63 @@ class N2EligibilityTests(unittest.TestCase):
         self.assertEqual(result["consumerSnapshot"]["content"]["key"], "takes")
         self.assertEqual(len(result["evidenceIds"]), 8)
         self.assertEqual(self.assess(), result)
+
+    def test_one_sufficient_keyed_ai_review_without_mandatory_blind_pass(self):
+        qa = deepcopy(self.qa)
+        qa.pop("blind")
+        qa.pop("comparison")
+        qa["evaluation"] = {
+            "status": "supported", "uncertain": False, "answers": ["takes"],
+            "reasoning": "Third-person singular form in a habitual routine.",
+            "checks": {
+                "linguisticCorrectness": "The routine clause uses third-person agreement.",
+                "answerCompleteness": "The proposed answer set covers the stated constraint.",
+                "vietnameseExplanation": "The explanation matches the supplied key.",
+                "suitability": "Elementary typed form; does not certify CEFR attainment.",
+            },
+        }
+        self.assertEqual(self.assess(qa_run=qa)["outcome"], "ELIGIBLE")
+        qa["evaluation"]["checks"].pop("answerCompleteness")
+        self.assertEqual(self.assess(qa_run=qa)["outcome"], "HOLD")
+        qa["evaluation"]["checks"]["answerCompleteness"] = "Unverified"
+        qa["evaluation"]["answers"] = ["takes", "does take"]
+        self.assertEqual(self.assess(qa_run=qa)["outcome"], "HOLD")
+        self.assertEqual(self.assess(qa_run=qa, verify_qa=None)["outcome"], "HOLD")
+
+    def test_persist_rejects_third_content_correction_across_regenerated_ids(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            path = str(Path(folder) / "state.json")
+            original = self.state["candidates"][self.id]["content"]
+            for n in range(4):
+                seed = deepcopy(self.batch["seeds"][0])
+                seed["seedId"] = f"generated-{n}"
+                seed["variantKey"] = f"variant-{n}"
+                seed["fixture"] = {**original, "rationale": f"SYNTHETIC TEST REVISION {n}"}
+                batch = {"batchId": f"test-batch-{n}", "seeds": [seed]}
+                if n == 3:
+                    class NoThirdProvider:
+                        provider, model = "synthetic", "must-not-run"
+                        calls = 0
+                        async def generate(self, seed):
+                            self.calls += 1
+                            return seed["fixture"]
+
+                    provider = NoThirdProvider()
+                    previous = json.loads(Path(path).read_text())
+                    with self.assertRaisesRegex(ValueError, "CORRECTION_ROUND_LIMIT"):
+                        asyncio.run(generate(batch, provider, state=previous, retries=0))
+                    self.assertEqual(provider.calls, 0)
+                # Persistence rejects an unsafe caller that skipped preflight too.
+                generated = asyncio.run(generate(batch, SyntheticWorker(), retries=0))
+                report = persist(batch, generated, path, {"status": "NOT_VERIFIED"})
+                if n < 3:
+                    self.assertEqual(report["rejected"], 0)
+                else:
+                    self.assertEqual(report["rejected"], 1)
+                    self.assertIn("CORRECTION_ROUND_LIMIT", report["candidates"][0]["issues"])
+            state = json.loads(Path(path).read_text())
+            self.assertEqual(len(state["history"]), 3)
+            self.assertEqual(len(state["candidates"]), 3)
 
     def test_missing_trust_fails_closed(self):
         result = self.assess(**{key: None for key in self.verifiers})
