@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parent
 CONFIG = json.loads((ROOT / "targets.json").read_text())
 SHA = re.compile(r"[0-9a-f]{40}")
 CONTEXT = "central-ci/"
-TERMINAL = {"success", "failure"}
 
 
 class Blocked(Exception):
@@ -97,23 +96,103 @@ class GitHub:
         })
 
 
-def completed_suites(statuses, target, creator):
+def latest_by_context(statuses):
     latest = {}
-    # GitHub lists newest first. An interrupted rerun's pending/error supersedes
-    # an older PASS, so cancellation and setup errors are retried next schedule.
-    for status in statuses:
-        context = status["context"]
+    # GitHub returns newest first; never fall back behind a pending/untrusted run.
+    for item in statuses:
+        context = item.get("context")
         if context not in latest:
-            latest[context] = status
+            latest[context] = item
+    return latest
+
+
+def trusted_outcome(item, pin, creator, workflow_sha=None):
+    if not isinstance(item, dict) or (item.get("creator") or {}).get("login") != creator:
+        return None
+    match = re.fullmatch(
+        r"(PASS|FAIL|BLOCKED|RUNNING) wf=([0-9a-f]{40}) pin=([0-9a-f]{40})",
+        item.get("description") or "",
+    )
+    if not match:
+        return None
+    outcome, workflow, actual_pin = match.groups()
+    if actual_pin != pin or (workflow_sha is not None and workflow != workflow_sha):
+        return None
+    if item.get("state") != {"PASS": "success", "FAIL": "failure",
+                              "BLOCKED": "error", "RUNNING": "pending"}[outcome]:
+        return None
+    url = item.get("target_url") or ""
+    if not re.fullmatch(
+        rf"https://github\.com/{re.escape(CONFIG['owner'])}/english-action/actions/runs/[1-9][0-9]*",
+        url,
+    ):
+        return None
+    return outcome
+
+
+def completed_suites(statuses, target, creator, workflow_sha=None):
+    latest = latest_by_context(statuses)
     return {suite for suite in target["suites"]
-            if (status := latest.get(CONTEXT + suite))
-            and status["state"] in TERMINAL
-            and status.get("creator", {}).get("login") == creator
-            and status.get("description", "").endswith("pin=" + target["pin"])}
+            if trusted_outcome(latest.get(CONTEXT + suite), target["pin"],
+                               creator, workflow_sha) in {"PASS", "FAIL"}}
 
 
-def select_work(api, repo, target, manual_sha, creator):
-    history = api.history(repo, target)
+def current_head_gate(api, repo, head, target, creator, workflow_sha):
+    latest = latest_by_context(api.statuses(repo, head))
+    outcomes = {suite: trusted_outcome(latest.get(CONTEXT + suite),
+                                      target["pin"], creator, workflow_sha)
+                for suite in target["suites"]}
+    if any(value not in {"PASS", "FAIL"} for value in outcomes.values()):
+        result = "BLOCKED"
+    elif any(value == "FAIL" for value in outcomes.values()):
+        result = "FAIL"
+    else:
+        result = "PASS"
+    print(json.dumps({"kind": "CURRENT_HEAD_GATE",
+                      "repository": f"{CONFIG['owner']}/{repo}",
+                      "source_sha": head, "workflow_sha": workflow_sha,
+                      "pin": target["pin"], "outcome": result,
+                      "suites": {suite: outcome or "UNTRUSTED_OR_MISSING"
+                                 for suite, outcome in outcomes.items()}},
+                     sort_keys=True), flush=True)
+    return result
+
+
+def historical_audit(api, repo, target, history, creator, workflow_sha):
+    failures = []
+    blocked = incomplete = 0
+    for sha in history[:-1]:
+        latest = latest_by_context(api.statuses(repo, sha))
+        for suite in target["suites"]:
+            item = latest.get(CONTEXT + suite)
+            outcome = trusted_outcome(item, target["pin"], creator)
+            if outcome == "FAIL":
+                failures.append((sha, suite, item))
+            elif outcome == "BLOCKED":
+                blocked += 1
+            elif outcome != "PASS":
+                incomplete += 1
+    for sha, suite, item in failures:
+        print(json.dumps({"kind": "HISTORICAL_TEST_FAILURE",
+                          "repository": f"{CONFIG['owner']}/{repo}",
+                          "source_sha": sha, "suite": suite,
+                          "pin": target["pin"],
+                          "workflow_sha": item["description"].split()[1][3:],
+                          "diagnostic_run": item["target_url"], "outcome": "FAIL"},
+                         sort_keys=True), flush=True)
+    result = ("BLOCKED" if blocked else "INCOMPLETE" if incomplete else
+              "FAIL" if failures else "PASS")
+    print(json.dumps({"kind": "HISTORICAL_COMPATIBILITY_AUDIT",
+                      "repository": f"{CONFIG['owner']}/{repo}",
+                      "workflow_sha": workflow_sha, "pin": target["pin"],
+                      "outcome": result, "failed_suites": len(failures),
+                      "blocked_suites": blocked, "incomplete_suites": incomplete},
+                     sort_keys=True), flush=True)
+    return result
+
+
+def select_work(api, repo, target, manual_sha, creator, *, history=None, workflow_sha=None):
+    history = api.history(repo, target) if history is None else history
     if manual_sha:
         valid_sha(manual_sha)
         if manual_sha not in history:
@@ -123,7 +202,8 @@ def select_work(api, repo, target, manual_sha, creator):
     # immutable revision (oldest first) in the remaining bounded slots.
     latest = history[-1]
     pending = [suite for suite in target["suites"]
-               if suite not in completed_suites(api.statuses(repo, latest), target, creator)]
+               if suite not in completed_suites(api.statuses(repo, latest), target, creator,
+                                               workflow_sha)]
     work = [(latest, pending)] if pending else []
     for sha in history[:-1]:
         done = completed_suites(api.statuses(repo, sha), target, creator)
@@ -135,13 +215,13 @@ def select_work(api, repo, target, manual_sha, creator):
     return work
 
 
-def lock_revisions(api, repo, target):
+def lock_revisions(api, repo, target, *, history=None):
     """Only enforce newer Owner decisions on descendants of their adoption SHA."""
     baseline = target.get("lock_from")
     if baseline is None:
         return frozenset()
     valid_sha(baseline)
-    history = api.history(repo, target)
+    history = api.history(repo, target) if history is None else history
     if baseline not in history:
         raise Blocked("Contract lock adoption SHA absent from verified main history")
     return frozenset(history[history.index(baseline):])
@@ -268,9 +348,11 @@ def record(repo, sha, suite, outcome, pin):
             stream.write(line + "\n\n")
 
 
-def run(api, repo, target, work):
+def run(api, repo, target, work, *, head_sha=None, history=None):
     bad = False
-    locked = lock_revisions(api, repo, target)
+    history = api.history(repo, target) if history is None else history
+    head_sha = history[-1] if head_sha is None else head_sha
+    locked = lock_revisions(api, repo, target, history=history)
     for sha, suites in work:
         blocked = False
         for suite in suites:
@@ -287,7 +369,7 @@ def run(api, repo, target, work):
             except Blocked:
                 outcome = "BLOCKED"
             record(repo, sha, suite, outcome, target["pin"])
-            bad |= outcome != "PASS"
+            bad |= outcome == "BLOCKED" or (sha == head_sha and outcome != "PASS")
             blocked |= outcome == "BLOCKED"
         if blocked:
             # No advancing past incomplete permission/setup/results in this batch.
@@ -309,15 +391,41 @@ def main():
     creator = api.request("/user").get("login")
     if not isinstance(creator, str) or not creator:
         raise Blocked("Token identity could not be verified")
+    workflow_sha = valid_sha(os.environ.get("GITHUB_SHA", ""))
     bad = False
+    snapshots = {}
     for repo, target in CONFIG["targets"].items():
         if repository not in {"all", repo}:
             continue
         try:
-            work = select_work(api, repo, target, manual_sha, creator)
-            bad |= run(api, repo, target, work)
+            valid_sha(target["pin"])
+            history = api.history(repo, target)
+            head = history[-1]
+            snapshots[repo] = head
+            work = select_work(api, repo, target, manual_sha, creator,
+                               history=history, workflow_sha=workflow_sha)
+            bad |= run(api, repo, target, work, head_sha=head, history=history)
+            # This gate is independent of work selection, even on a no-op
+            # schedule or an explicit manual rerun of an older revision.
+            bad |= current_head_gate(api, repo, head, target, creator, workflow_sha) != "PASS"
+            # Historical test failures are diagnostics; incomplete/untrusted
+            # coverage and infrastructure failures are blocking.
+            audit = historical_audit(api, repo, target, history, creator, workflow_sha)
+            bad |= audit in {"BLOCKED", "INCOMPLETE"}
         except Blocked as error:
             print(f"BLOCKED: {repo}; {error}", flush=True)
+            bad = True
+    # Recheck after both repositories: a newly advanced main cannot inherit
+    # another revision's PASS, including when main moves during the second repo.
+    for repo, head in snapshots.items():
+        try:
+            current = valid_sha(api.request(
+                f"/repos/{CONFIG['owner']}/{repo}/commits/main")["sha"])
+            if current != head:
+                print(f"BLOCKED: {repo}; main advanced during verification", flush=True)
+                bad = True
+        except (Blocked, KeyError, TypeError):
+            print(f"BLOCKED: {repo}; main identity unavailable", flush=True)
             bad = True
     return int(bad)
 

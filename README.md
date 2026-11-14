@@ -89,6 +89,27 @@ are preserved as failures when a subsequent correction passes.
 Historical private-caller descriptions above refer to the retained reusable APIs,
 which remain compatible for rollback.
 
+The central job reports **three distinct outcomes**:
+
+- **CURRENT_HEAD_GATE:** Every required suite of the immutable main snapshot must
+  have a latest, trusted PASS status for the configured Engine pin and this
+  workflow SHA. The gate checks the status ledger even when no tests are
+  selected, and blocks on a failing, missing, pending, foreign or mismatched
+  status. Main is rechecked after both repositories; a moving HEAD blocks.
+- **HISTORICAL_COMPATIBILITY_AUDIT:** Every older SHA retains its own actual
+  suite statuses and linked diagnostic run. Historical test FAILs are listed
+  separately and do not fail the current HEAD gate or the aggregate workflow.
+  Missing/untrusted history coverage or historical infrastructure BLOCKED
+  remains blocking until recovered.
+- **Aggregate workflow:** Blocks on any current HEAD gate failure, incomplete
+  historical coverage, authentication/authorization, checkout, pin, status
+  publication or execution failure. A green run is not evidence that historical
+  revisions passed compatibility tests; consult the historical audit records.
+
+A historical revision checked with a **newer** pinned Engine is a compatibility
+observation, not proof that its original historical implementation was broken.
+The workflow does not reconstruct original per-commit Engine pins.
+
 ### Credential configuration
 
 The central workflow runs CI for both private repositories using exactly one
@@ -140,8 +161,10 @@ Central tests use only synthetic/public fixtures.
   invocation prioritizes the latest main SHA's missing suites, then fills the
   remaining slots with oldest incomplete SHAs (up to `batch_size` per repository).
   Newer success cannot cover a missing older result. Pending/error, missing contexts,
-  foreign status authors and wrong pins are retried; failure remains a failure
-  on its own SHA. A BLOCKED result stops advancement within that repository.
+  foreign status authors and wrong pins are retried; terminal historical test
+  failures stay attributed to their own SHA and are not relabelled. HEAD statuses
+  must additionally match this workflow SHA before they can be reused.
+  A BLOCKED result stops advancement within that repository.
 - Open **Actions → Central Private Repository CI → Run workflow** on main.
   Choose all and leave SHA empty to catch up; or choose exactly english or
   english-content with a full lowercase 40-character SHA to force rerun.
@@ -149,7 +172,8 @@ Central tests use only synthetic/public fixtures.
 - Cancellation/runner loss leaves pending/missing status and is recovered by the
   next invocation. A test failure remains red on its own SHA and can be rerun
   manually. BLOCKED maps to status error; skipped/unrun suites never map to success.
-  A green no-work central run does not erase earlier failed source statuses.
+  A no-work run still verifies the HEAD statuses and historical ledger;
+  it cannot infer success from older HEAD checks or erase failed source statuses.
 - Statuses are the durable per-SHA ledger. A 1000-page API safety bound fails
   closed without discarding history. Each command has a 5-minute timeout;
   the central job is bounded to 45 minutes. No concurrency cancellation group,

@@ -13,9 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import central_ci as ci
 
 
-def status(suite, state="success", pin="a" * 40, creator="ci[bot]"):
+def status(suite, state="success", pin="a" * 40, creator="ci[bot]",
+           workflow="b" * 40, url=None, description=None):
+    outcome = {"success": "PASS", "failure": "FAIL", "pending": "RUNNING",
+               "error": "BLOCKED"}[state]
     return {"context": ci.CONTEXT + suite, "state": state,
-            "description": "PASS wf=" + "b" * 40 + " pin=" + pin,
+            "description": description or f"{outcome} wf={workflow} pin={pin}",
+            "target_url": url or "https://github.com/phatnguyen03022001/english-action/actions/runs/123",
             "creator": {"login": creator}}
 
 
@@ -31,6 +35,10 @@ class FakeAPI:
         return self.status_map.get(sha, [])
     def status(self, repo, sha, suite, outcome, pin):
         self.results.append((repo, sha, suite, outcome, pin))
+        state = {"PASS": "success", "FAIL": "failure",
+                 "BLOCKED": "error", "RUNNING": "pending"}[outcome]
+        self.status_map.setdefault(sha, []).insert(
+            0, status(suite, state, pin, workflow=os.environ.get("GITHUB_SHA", "b" * 40)))
 
 
 class RecoveryTests(unittest.TestCase):
@@ -103,7 +111,7 @@ class RecoveryTests(unittest.TestCase):
     def test_failure_is_attributed_to_exact_repo_sha_and_pin(self):
         work = [(self.api.hist[0], ["one"]), (self.api.hist[1], ["two"])]
         with patch.object(ci, "verify", side_effect=["FAIL", "PASS"]), patch.object(ci, "record"):
-            self.assertTrue(ci.run(self.api, "english", self.target, work))
+            self.assertFalse(ci.run(self.api, "english", self.target, work))
         self.assertEqual(self.api.results,
                          [("english", self.api.hist[0], "one", "RUNNING", "a" * 40),
                           ("english", self.api.hist[0], "one", "FAIL", "a" * 40),
@@ -117,17 +125,41 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(verify.call_count, 1)
         self.assertEqual(self.api.results[-1][3], "BLOCKED")
 
-    def test_pat_identity_is_used_without_app_bot_suffix(self):
+    def test_historical_test_failure_does_not_fail_current_head(self):
+        work = [(self.api.hist[-1], ["one"]), (self.api.hist[0], ["one"])]
+        with patch.object(ci, "verify", side_effect=["PASS", "FAIL"]), patch.object(ci, "record"):
+            self.assertFalse(ci.run(self.api, "english", self.target, work))
+        self.assertEqual(self.api.results[-1][3], "FAIL")
+
+    def test_previously_failed_head_blocks_even_when_no_new_work(self):
+        head = self.api.hist[-1]
+        self.api.status_map[head] = [status("one", "failure"), status("two")]
         with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": "private",
+                                     "GITHUB_SHA": "b" * 40, "GITHUB_RUN_ID": "123",
+                                     "SOURCE_REPOSITORY": "english", "SOURCE_SHA": ""}), \
+                patch.object(ci, "GitHub", return_value=self.api), \
+                patch.object(self.api, "request", create=True, return_value={"login": "ci[bot]"}), \
+                patch.object(ci, "select_work", return_value=[]), \
+                patch.object(ci, "run", return_value=False):
+            self.assertEqual(ci.main(), 1)
+
+    def test_pat_identity_is_used_without_app_bot_suffix(self):
+        def request(path):
+            return ({"login": "token-owner"} if path == "/user" else
+                    {"sha": self.api.hist[-1]})
+        with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": "private",
+                                     "GITHUB_SHA": "b" * 40,
                                      "SOURCE_REPOSITORY": "english", "SOURCE_SHA": ""}), \
                 patch.object(ci, "GitHub", return_value=self.api), \
                 patch.object(self.api, "request", create=True,
-                             return_value={"login": "token-owner"}) as request, \
+                             side_effect=request) as requests, \
                 patch.object(ci, "select_work", return_value=[]) as select, \
-                patch.object(ci, "run", return_value=False):
+                patch.object(ci, "run", return_value=False), \
+                patch.object(ci, "current_head_gate", return_value="PASS"), \
+                patch.object(ci, "historical_audit", return_value="PASS"):
             self.assertEqual(ci.main(), 0)
-        request.assert_called_once_with("/user")
-        self.assertEqual(select.call_args.args[-1], "token-owner")
+        requests.assert_any_call("/user")
+        self.assertEqual(select.call_args.args[4], "token-owner")
 
     def test_invalid_token_identity_is_blocked_before_source_access(self):
         with patch.dict(os.environ, {"CENTRAL_CI_TOKEN": "invalid",
@@ -147,6 +179,156 @@ class RecoveryTests(unittest.TestCase):
                                    [(self.api.hist[0], ["one"])]))
         verify.assert_not_called()
         self.assertEqual(record.call_args.args[3], "BLOCKED")
+
+
+class PolicyGateTests(unittest.TestCase):
+    def setUp(self):
+        self.head = "e" * 40
+        self.workflow = "b" * 40
+        self.target = {"baseline": "a" * 40, "pin": "a" * 40,
+                       "suites": ["one", "two"]}
+        self.api = FakeAPI()
+        self.api.status_map = {
+            sha: [status("one"), status("two")] for sha in self.api.hist
+        }
+        self.env = {"CENTRAL_CI_TOKEN": "private", "GITHUB_SHA": self.workflow,
+                    "GITHUB_RUN_ID": "123", "SOURCE_REPOSITORY": "english",
+                    "SOURCE_SHA": ""}
+        self.config = {"owner": "phatnguyen03022001", "batch_size": 3,
+                       "targets": {"english": self.target}}
+
+    def execute(self, *, no_work=True):
+        with patch.object(ci, "CONFIG", self.config), \
+                patch.dict(os.environ, self.env), \
+                patch.object(ci, "GitHub", return_value=self.api), \
+                patch.object(self.api, "request", create=True,
+                             side_effect=self.request):
+            if no_work:
+                with patch.object(ci, "select_work", return_value=[]):
+                    return ci.main()
+            return ci.main()
+
+    def request(self, path, payload=None):
+        if path == "/user":
+            return {"login": "ci[bot]"}
+        if path.endswith("/commits/main"):
+            return {"sha": getattr(self.api, "current_head", self.head)}
+        raise AssertionError("Unexpected API request: " + path)
+
+    def test_head_pass_with_history_pass(self):
+        with contextlib.redirect_stdout(io.StringIO()) as logs:
+            self.assertEqual(self.execute(), 0)
+        self.assertIn('"kind": "CURRENT_HEAD_GATE", "outcome": "PASS"', logs.getvalue())
+        self.assertIn('"kind": "HISTORICAL_COMPATIBILITY_AUDIT", "outcome": "PASS"',
+                      logs.getvalue())
+
+    def test_head_pass_with_previously_recorded_historical_failure(self):
+        old_sha = self.api.hist[0]
+        self.api.status_map[old_sha][0] = status("one", "failure")
+        with contextlib.redirect_stdout(io.StringIO()) as logs:
+            self.assertEqual(self.execute(), 0)
+        self.assertIn(old_sha, logs.getvalue())
+        self.assertIn("HISTORICAL_COMPATIBILITY_AUDIT", logs.getvalue())
+        self.assertIn("FAIL", logs.getvalue())
+        self.assertEqual(self.api.status_map[old_sha][0]["state"], "failure")
+
+    def test_head_fail_with_all_history_passing(self):
+        self.api.status_map[self.head][0] = status("one", "failure")
+        self.assertEqual(self.execute(), 1)
+
+    def test_head_fail_with_history_fail(self):
+        self.api.status_map[self.head][0] = status("one", "failure")
+        self.api.status_map[self.api.hist[0]][0] = status("one", "failure")
+        self.assertEqual(self.execute(), 1)
+
+    def test_missing_or_untrusted_head_status_is_blocked(self):
+        defects = [
+            [status("one")],
+            [status("one", creator="other"), status("two")],
+            [status("one", pin="c" * 40), status("two")],
+            [status("one", workflow="c" * 40), status("two")],
+            [status("one", state="pending"), status("two")],
+            [status("one", state="error"), status("two")],
+            [status("one", url="https://example.org/other"), status("two")],
+            [status("one", description="PASS wf=broken pin=" + "a" * 40), status("two")],
+        ]
+        for latest in defects:
+            with self.subTest(statuses=latest):
+                self.api.status_map[self.head] = latest
+                self.assertEqual(self.execute(), 1)
+
+    def test_latest_pending_or_foreign_context_cannot_reuse_older_pass(self):
+        self.api.status_map[self.head] = [status("one", "pending"), status("one"),
+                                           status("two")]
+        self.assertEqual(self.execute(), 1)
+        self.api.status_map[self.head] = [status("one", creator="other"),
+                                           status("one"), status("two")]
+        self.assertEqual(self.execute(), 1)
+
+    def test_history_infrastructure_error_and_incomplete_history_block(self):
+        self.api.status_map[self.api.hist[0]][0] = status("one", "error")
+        self.assertEqual(self.execute(), 1)
+        self.api.status_map[self.api.hist[0]] = [status("one")]
+        self.assertEqual(self.execute(), 1)
+
+    def test_invalid_engine_pin_blocks_before_work(self):
+        self.target["pin"] = "main"
+        self.assertEqual(self.execute(), 1)
+
+    def test_head_moves_during_verification(self):
+        self.api.current_head = self.head
+        def move_head(api, repo, target, work, **kwargs):
+            self.api.current_head = "f" * 40
+            return False
+        with patch.object(ci, "run", side_effect=move_head):
+            self.assertEqual(self.execute(), 1)
+
+    def test_manual_historical_test_fail_does_not_fail_passing_head(self):
+        self.env["SOURCE_SHA"] = self.api.hist[0]
+        with patch.object(ci, "verify", return_value="FAIL"), \
+                contextlib.redirect_stdout(io.StringIO()) as logs:
+            self.assertEqual(self.execute(no_work=False), 0)
+        self.assertIn('"kind": "HISTORICAL_TEST_FAILURE"', logs.getvalue())
+        self.assertIn('"kind": "CURRENT_HEAD_GATE", "outcome": "PASS"',
+                      logs.getvalue())
+
+    def test_manual_historical_rerun_cannot_skip_failing_head(self):
+        self.env["SOURCE_SHA"] = self.api.hist[0]
+        self.api.status_map[self.head][0] = status("one", "failure")
+        with patch.object(ci, "verify", return_value="PASS"), \
+                patch.object(ci, "record"):
+            self.assertEqual(self.execute(no_work=False), 1)
+
+    def test_historical_failure_rerun_keeps_old_evidence_and_actual_new_result(self):
+        old_sha = self.api.hist[0]
+        old = status("one", "failure")
+        self.api.status_map[old_sha] = [old, status("two")]
+        with patch.object(ci, "verify", return_value="PASS"), \
+                patch.object(ci, "record"), \
+                patch.dict(os.environ, self.env):
+            ci.run(self.api, "english", self.target, [(old_sha, ["one"])])
+        self.assertEqual(self.api.results[-1][3], "PASS")
+        self.assertIs(old, self.api.status_map[old_sha][-2])
+        self.assertEqual(old["state"], "failure")
+
+    def test_history_selection_uses_current_workflow_identity_only_for_head(self):
+        self.api.status_map[self.head] = [
+            status("one", workflow="c" * 40), status("two", workflow="c" * 40)
+        ]
+        work = ci.select_work(self.api, "english", self.target, "", "ci[bot]",
+                              workflow_sha=self.workflow)
+        self.assertEqual(work, [(self.head, ["one", "two"])])
+
+    def test_authentication_and_status_publication_fail_closed(self):
+        self.env["CENTRAL_CI_TOKEN"] = ""
+        with patch.object(ci, "CONFIG", self.config), patch.dict(os.environ, self.env):
+            with self.assertRaises(ci.Blocked):
+                ci.main()
+        self.env["CENTRAL_CI_TOKEN"] = "private"
+        self.api.status_map[self.head] = []
+        with patch.object(ci, "verify", return_value="PASS"), \
+                patch.object(self.api, "status", side_effect=ci.Blocked("denied")):
+            self.assertEqual(self.execute(no_work=False), 1)
 
 
 class HistoryTests(unittest.TestCase):
