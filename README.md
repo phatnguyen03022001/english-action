@@ -15,6 +15,25 @@
 - Legacy `english_action.*` imports, `python -m english_action`, `python -m english_action.spec_validate`, `python -m english_action.spawn`, `english-quality` and `english-spawn` remain available; the legacy Python modules delegate to the feature implementations. New direct module paths are `english_action.english.spec_validate`, `english_action.content.cli` and `english_action.content.spawn`.
 - Both existing reusable workflows stay in `.github/workflows/` and keep their inputs. Consumers may remain pinned to previous verified SHAs; no private consumer change is implied by this refactor.
 
+## DATA-05 — opt-in whole-app contract validation
+
+The consumer supplies four local Draft 2020-12 schemas at `schemas/{core,assessment,exam,media}/*-v1.schema.json`; public code never embeds private data or retrieves remote `$ref`.
+
+```python
+from english_action.content.whole_app import WholeAppSchemas, validate_whole_app
+
+contracts = WholeAppSchemas("schemas")
+result = validate_whole_app(
+    records, schemas=contracts,
+    canonical_records=tuple(verified_canonical_revisions),
+    require_eligibility=True,
+)
+# result: status PASS / FAIL / BLOCKED, deterministic bounded diagnostics,
+# affected entities, truncated, publicationEligible=False (always)
+```
+
+`require_eligibility=False` means only deterministic **contract** validation; PASS does **not** mean independent semantic quality, legal rights, valid official scoring or publication approval. `require_eligibility=True` blocks missing provider/source/evidence authority and ungenerated media. Optional `trusted_product_refs`, `trusted_evidence` and `candidate_records` must come from independently verified caller state; same-batch candidate references also require an explicit `batch_id`. The API is pure and does not issue IDs, grade learner responses, synthesize media, persist state or publish content.
+
 ## Current status
 
 The private [english-content consumer at Python-only cutover](https://github.com/phatnguyen03022001/english-content/commit/79e7e1c74d98f6a4b57c9d9b75f3bb25d06048b5) invokes the pinned Python Engine for schema/candidate commands and Python historical/private regressions. Node/Ajv is no longer its runtime or CI dependency; retired Node source/tests remain recoverable in Git history, not as an active fallback. **Real publication stays disabled** without independently authenticated appointments, evidence, rights and editorial authority. R04-02 permits bounded ephemeral private verification with redacted outcomes; it makes no claim about private-source billing exemptions.
