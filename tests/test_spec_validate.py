@@ -50,6 +50,23 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertIn("PASS; 0 structural error(s)", result.stdout)
         self.assertIn("NOT VERIFIED", result.stdout)
 
+    def test_legacy_story_heading_still_passes(self) -> None:
+        self.replace("### User Story 1 - Perform a synthetic step",
+                     "### User Story 1 - Perform a synthetic step (Priority: P1)")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_story_heading_without_title_fails(self) -> None:
+        self.replace("### User Story 1 - Perform a synthetic step", "### User Story 1 - ")
+        self.assert_failure("BAD_STORY")
+
+    def test_duplicate_story_id_fails(self) -> None:
+        current = self.spec.read_text(encoding="utf-8")
+        story = current.split("### User Story 1", 1)[1].split("### Edge Cases", 1)[0]
+        duplicate = story.replace("Perform a synthetic step", "Repeat a synthetic step", 1)
+        self.replace("### Edge Cases", "### User Story 1" + duplicate + "### Edge Cases")
+        self.assert_failure("DUPLICATE_STORY")
+
     def test_missing_mandatory_section_fails(self) -> None:
         self.replace("## Success Criteria", "## Optional Outcomes")
         self.assert_failure("NO_SECTION")
@@ -63,9 +80,13 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.replace("**FR-001**:", "**FR-002**:")
         self.assert_failure("NONSEQUENTIAL_ID")
 
-    def test_missing_acceptance_scenario_fails(self) -> None:
+    def test_malformed_acceptance_scenario_fails(self) -> None:
         self.replace("1. **Given** an eligible", "1. Given an eligible")
         self.assert_failure("BAD_SCENARIO")
+
+    def test_missing_acceptance_scenarios_fails(self) -> None:
+        self.replace("**Acceptance Scenarios**:", "**Illustrations**:")
+        self.assert_failure("NO_ACCEPTANCE")
 
     def test_no_independent_test_fails(self) -> None:
         self.replace("**Independent Test**:", "**Illustration**:")
@@ -113,6 +134,10 @@ class SpecificationValidatorTests(unittest.TestCase):
     def test_malformed_trace_fails(self) -> None:
         self.replace("[Trace: US1.1; D01-01.]", "[Trace: ???]")
         self.assert_failure("MALFORMED_TRACE")
+
+    def test_missing_trace_fails(self) -> None:
+        self.replace(" [Trace: US1.1; D01-01.]", "")
+        self.assert_failure("NO_TRACE")
 
     def test_nonexistent_local_requirement_trace_fails(self) -> None:
         self.replace("[Trace: FR-001; D01-01.]", "[Trace: FR-999; D01-01.]")
@@ -399,10 +424,18 @@ class SpecificationValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--root", result.stderr)
 
-    def _synthetic_product_locks(self) -> None:
+    def _synthetic_product_locks(self, *, legacy: bool = False) -> None:
         inventory = (self.root / "docs/product/capabilities.md").read_text(encoding="utf-8")
         self.document("knowledge/product/capability-map.md", inventory)
         (self.root / "docs/product/capabilities.md").unlink()
+        activation = (
+            "P0 runtime AI Assessment is OFF. "
+            "P1 AI Assessment remains conditional/deferred until separately authorized."
+            if legacy else
+            "Runtime AI Assessment is OFF for the approved initial Foundation delivery. "
+            "Any later runtime AI Assessment remains conditional and requires separate Human Owner "
+            "activation after validation."
+        )
         self.document("knowledge/product/decisions.md",
                       "# Decisions\n\n"
                       "### INV-02 — Published media\n"
@@ -410,12 +443,16 @@ class SpecificationValidatorTests(unittest.TestCase):
                       "Images permit static PNG/SVG.\n\n"
                       "### INV-03 — Assessment\n"
                       "Deterministic evaluation is the default. "
-                      "P0 runtime AI Assessment is OFF; "
-                      "P1 AI Assessment remains conditional.\n\n"
+                      "The Human Owner explicitly approves that assessment capability. "
+                      "The submission/task is eligible. "
+                      + activation + " Never fabricate scores.\n\n"
                       "### ASSESSMENT-LOCK-01 — Runtime prohibition\n"
-                      "Realtime AI is **FORBIDDEN**. Use pre-generated question bank, "
+                      "Conversational AI agents, realtime Voice Agents and dynamic AI examiners "
+                      "are **FORBIDDEN**. Use pre-generated question bank, "
                       "explicit submission, IELTS Speaking fixed sequence and evaluation "
-                      "after submission. A transcript is **not** evidence of pronunciation.\n")
+                      "after submission with dimension-specific validation. "
+                      "Unsupported criteria stay **not assessed/unavailable**. "
+                      "A transcript is **not** evidence of pronunciation.\n")
         self.document("knowledge/features/assessment/scoring/spec.md",
                       "# Scoring\n\n## 3. IELTS scoring\n"
                       "IELTS versioned policy.\n## 4. TOEIC scoring\n"
@@ -532,6 +569,45 @@ class SpecificationValidatorTests(unittest.TestCase):
                         encoding="utf-8")
         result = self.run_cli(product_locks=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_priority_neutral_product_lock_passes(self) -> None:
+        self.replace("### User Story 1 - Perform a synthetic step",
+                     "### User Story 1 - Perform a synthetic step (Priority: P1)")
+        self._synthetic_product_locks()
+        result = self.run_cli(product_locks=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_legacy_product_lock_still_passes(self) -> None:
+        self._synthetic_product_locks(legacy=True)
+        result = self.run_cli(product_locks=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_removed_ai_safety_restrictions_fail(self) -> None:
+        self._synthetic_product_locks()
+        path = self.root / "knowledge/product/decisions.md"
+        original = path.read_text(encoding="utf-8")
+        for required, weakened in (
+            ("Deterministic evaluation is the default", "AI evaluation is the default"),
+            ("is OFF for the approved initial Foundation delivery",
+             "is ON for the approved initial Foundation delivery"),
+            ("remains conditional and requires separate Human Owner activation after validation",
+             "may activate automatically"),
+            ("The Human Owner explicitly approves that assessment capability",
+             "The system selects the assessment capability"),
+            ("The submission/task is eligible", "Any submission may be assessed"),
+            ("dimension-specific validation", "generic validation"),
+            ("Conversational AI agents", "Static question banks"),
+            ("realtime Voice Agents", "post-submission review"),
+            ("dynamic AI examiners", "fixed exam scripts"),
+            ("Never fabricate scores", "Missing results may be estimated"),
+            ("not assessed/unavailable", "scored zero"),
+        ):
+            with self.subTest(restriction=required):
+                self.assertIn(required, original)
+                path.write_text(original.replace(required, weakened, 1), encoding="utf-8")
+                result = self.run_cli(product_locks=True)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("ERROR CANONICAL_LOCK_DRIFT:", result.stdout)
 
     def test_missing_speech_generator_lock_fails_without_keyword_ban(self) -> None:
         self._synthetic_product_locks()

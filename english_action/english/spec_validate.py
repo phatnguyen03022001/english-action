@@ -16,7 +16,8 @@ from urllib.parse import unquote, urlsplit
 FEATURE_DIR = re.compile(r"\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 META = re.compile(r"^\*\*([^*]+)\*\*:\s*(.*)$")
-STORY = re.compile(r"^### User Story (\d+) - .+ \(Priority: (P[123])\)\s*$")
+# Historical priority suffixes are ordinary title text.
+STORY = re.compile(r"^### User Story ([1-9][0-9]*) - (?!\(Priority:)\S.*$")
 IDENT = re.compile(r"^-\s+\*\*((?:FR|NFR|SC)-(\d{3}))\*\*(?:\s*[:—-])")
 CAP = re.compile(r"(?<![\w-])D\d{2}-\d{2}(?![\w-])")
 LINK = re.compile(r"\[[^\]\n]+\]\((?P<dest><[^>]+>|[^)\s]+)(?:\s+['\"][^'\"]+['\"])?\)")
@@ -189,7 +190,7 @@ class Validator:
                        if STORY.match(lines[i])]
             for i in range(start + 1, stop):
                 if lines[i].startswith("### User Story ") and not STORY.match(lines[i]):
-                    self.emit(path, i + 1, "BAD_STORY", "User Story needs number and P1/P2/P3 priority")
+                    self.emit(path, i + 1, "BAD_STORY", "User Story needs a positive number and a descriptive title")
             for index, (i, match) in enumerate(matches):
                 assert match is not None
                 number = int(match.group(1))
@@ -213,7 +214,7 @@ class Validator:
                 if not count:
                     self.emit(path, i + 1, "NO_SCENARIO", f"User Story {number} needs at least one scenario")
         if not stories:
-            self.emit(path, 1, "NO_STORIES", "At least one prioritized User Story required")
+            self.emit(path, 1, "NO_STORIES", "At least one numbered User Story required")
 
         ids: dict[str, set[str]] = {"FR": set(), "NFR": set(), "SC": set()}
         for kind, title in (("FR", "Functional Requirements"),
@@ -602,12 +603,23 @@ class Validator:
             "INV-02": ("only by `edge-tts`", "local ai agents",
                        "never synthesize speech", "static png/svg"),
             "INV-03": ("deterministic evaluation is the default",
-                       "p0 runtime ai assessment is off",
-                       "p1 ai assessment remains conditional"),
-            "ASSESSMENT-LOCK-01": ("**forbidden**", "pre-generated question bank",
+                       "human owner explicitly approves that assessment capability",
+                       "the submission/task is eligible", "never fabricate scores"),
+            "ASSESSMENT-LOCK-01": ("are **forbidden**", "conversational ai agents",
+                                   "realtime voice agents", "dynamic ai examiners",
+                                   "pre-generated question bank",
                                    "explicit submission", "ielts speaking",
-                                   "after submission", "transcript is **not** evidence"),
+                                   "after submission", "transcript is **not** evidence",
+                                   "dimension-specific validation", "not assessed/unavailable"),
         }
+        # Central CI revalidates immutable historical revisions as well as current requirements.
+        activation_wordings = (
+            ("runtime ai assessment is off for the approved initial foundation delivery",
+             "any later runtime ai assessment remains conditional and requires separate "
+             "human owner activation after validation"),
+            ("p0 runtime ai assessment is off",
+             "p1 ai assessment remains conditional/deferred until separately authorized"),
+        )
         for heading, markers in required.items():
             area = self.section(lines, heading, 3)
             if area is None:
@@ -619,6 +631,11 @@ class Validator:
             if any(marker not in body for marker in markers):
                 self.emit(path, start + 1, "CANONICAL_LOCK_DRIFT",
                           f"Canonical {heading} markers changed; owner decision requires review")
+            elif heading == "INV-03" and not any(
+                all(marker in body for marker in wording) for wording in activation_wordings
+            ):
+                self.emit(path, start + 1, "CANONICAL_LOCK_DRIFT",
+                          "INV-03 requires runtime AI off for initial delivery and separate AI activation")
 
         scoring = self.root / "knowledge/features/assessment/scoring/spec.md"
         if scoring.is_file():

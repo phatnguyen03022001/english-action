@@ -8,7 +8,7 @@
 
 **Decision Status**: PROPOSED — synthetic fixture, not approved
 
-**Product Increment**: P0-a
+**Product Increment**: Synthetic exercise
 
 **Feature Scope**: Synthetic user action with observable acceptance.
 
@@ -22,9 +22,9 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Perform a synthetic step (Priority: P1)
+### User Story 1 - Perform a synthetic step
 
-**Why this priority**: Demonstrate the narrow test surface.
+**Why this matters**: Demonstrate the narrow test surface.
 
 **Independent Test**: Complete one synthetic step and observe a result.
 
