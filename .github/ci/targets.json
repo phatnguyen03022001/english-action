@@ -4,7 +4,7 @@
   "targets": {
     "english": {
       "baseline": "01294903475ca8b27ad62fadd4ffd715e68892ff",
-      "pin": "b6deb414e180a379294e43a8c3580cdc7bd7f483",
+      "pin": "660a368664414e5c6f8ec225c84c838621104f12",
       "suites": [
         "spec-validation"
       ],
